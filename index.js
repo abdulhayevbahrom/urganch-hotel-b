@@ -5,7 +5,7 @@ const cors = require("cors");
 const mongoose = require("mongoose"); // ⬅️ qo‘shamiz
 const applyTimezone = require("./model/mongoose-timezone"); // ⬅️ pluginni chaqiramiz
 
-const PORT = process.env.PORT || 8100;
+const PORT = process.env.PORT || 8484;
 const notfound = require("./middleware/notfound.middleware");
 const router = require("./routes/router");
 
@@ -26,9 +26,7 @@ app.use(express.json());
 // shuning uchun domenlarni normallashtirib solishtiramiz.
 const normalizeOrigin = (value) => String(value || "").replace(/\/+$/, "");
 const allowedOrigins = [
-  "http://localhost:5173",
-  "https://hotel-demo-f.vercel.app",
-  "https://demo.my-hotels.uz",
+  "https://urganch-hotel.vercel.app",
   ...(process.env.CLIENT_ORIGINS || "").split(","),
 ]
   .map((origin) => normalizeOrigin(origin.trim()))
