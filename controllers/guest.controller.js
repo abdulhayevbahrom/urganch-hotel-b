@@ -11,6 +11,7 @@ const {
   getHotelSettings,
   applyTimeToDate,
   calculateCheckoutDueAt,
+  parseTime,
 } = require("../utils/hotelSettings");
 const {
   syncRoomsOccupancyByIds,
@@ -21,6 +22,7 @@ const {
   getDailyRateForDay,
   getLodgingTotal,
 } = require("../utils/guestDailyRates");
+const { recordCashTransaction } = require("../utils/cashRegister");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TIMEZONE = process.env.APP_TIMEZONE || "Asia/Tashkent";
@@ -91,6 +93,7 @@ const buildBillingState = (
     checkInAt,
     safeStayDays,
     hotelSettings.checkoutTime || "12:00",
+    hotelSettings.checkinTime || "09:00",
   );
 
   const checkoutReminderAt = applyTimeToDate(
@@ -128,22 +131,23 @@ const getCompletedStayDays = (
   checkInAt,
   checkOutAt,
   checkoutTime = "12:00",
+  checkinTime = "09:00",
 ) => {
   const checkIn = moment(checkInAt).tz(TIMEZONE);
   const checkOut = moment(checkOutAt).tz(TIMEZONE);
   if (!checkIn.isValid() || !checkOut.isValid()) return 1;
 
-  const [checkoutHour = 12, checkoutMinute = 0] = String(checkoutTime)
-    .split(":")
-    .map(Number);
-  const cutoffMinutes = checkoutHour * 60 + checkoutMinute;
+  const [checkinHour = 9, checkinMinute = 0] = String(checkinTime).split(":").map(Number);
+  const [checkoutHour = 12, checkoutMinute = 0] = String(checkoutTime).split(":").map(Number);
+  const checkinMinutes = checkinHour * 60 + checkinMinute;
+  const checkoutMinutes = checkoutHour * 60 + checkoutMinute;
   const checkInMinutes = checkIn.hour() * 60 + checkIn.minute();
   const checkOutMinutes = checkOut.hour() * 60 + checkOut.minute();
   const checkInOperationalDay = checkIn.clone().startOf("day");
   const checkOutOperationalDay = checkOut.clone().startOf("day");
 
-  if (checkInMinutes < cutoffMinutes) checkInOperationalDay.subtract(1, "day");
-  if (checkOutMinutes <= cutoffMinutes) {
+  if (checkInMinutes < checkinMinutes) checkInOperationalDay.subtract(1, "day");
+  if (checkOutMinutes <= checkoutMinutes) {
     checkOutOperationalDay.subtract(1, "day");
   }
 
@@ -382,7 +386,8 @@ const createGuest = async (req, res) => {
       if (!bookedForAt || Number.isNaN(bookedForAt.getTime())) {
         return response.error(res, "Bron sanasi noto'g'ri");
       }
-      bookedForAt.setHours(12, 0, 0, 0);
+      const checkin = parseTime(hotelSettings.checkinTime || "09:00");
+      bookedForAt.setHours(checkin.hour, checkin.minute, 0, 0);
 
       const start = new Date(bookedForAt);
       start.setHours(0, 0, 0, 0);
@@ -553,6 +558,7 @@ const createGuestsBulk = async (req, res) => {
     }
 
     const isReservation = Boolean(isBooking);
+    const hotelSettings = await getHotelSettings();
     const normalizedDailyRate = Number(dailyRate || 0);
     const normalizedStayDays = Math.max(Number(stayDays || 1), 1);
     const bookedForAt =
@@ -562,7 +568,8 @@ const createGuestsBulk = async (req, res) => {
       if (!bookedForAt || Number.isNaN(bookedForAt.getTime())) {
         return response.error(res, "Bron sanasi noto'g'ri");
       }
-      bookedForAt.setHours(12, 0, 0, 0);
+      const checkin = parseTime(hotelSettings.checkinTime || "09:00");
+      bookedForAt.setHours(checkin.hour, checkin.minute, 0, 0);
       const start = new Date(bookedForAt);
       start.setHours(0, 0, 0, 0);
       const end = new Date(bookedForAt);
@@ -617,7 +624,6 @@ const createGuestsBulk = async (req, res) => {
       }
     }
 
-    const hotelSettings = await getHotelSettings();
     const acceptedBy = await buildActionBy(req.admin);
     const baseCheckInAt = isReservation
       ? bookedForAt
@@ -1229,6 +1235,7 @@ const updateGuest = async (req, res) => {
         guest.checkInAt,
         editedCheckOutAt,
         hotelSettings.checkoutTime || "12:00",
+        hotelSettings.checkinTime || "09:00",
       );
       const servicesTotal = (guest.services || []).reduce(
         (sum, service) => sum + Number(service?.totalAmount || 0),
@@ -1489,9 +1496,21 @@ const addGuestPayment = async (req, res) => {
     await syncGuestBilling(guest);
 
     guest.payments.push({ amount: Number(amount), type, note });
+    const paymentIndex = guest.payments.length - 1;
     guest.paidAmount = Number(guest.paidAmount || 0) + Number(amount);
     recalcAmounts(guest);
     await guest.save();
+    await recordCashTransaction({
+      user: req.admin,
+      sourceType: "guest",
+      sourceId: guest._id,
+      sourcePaymentIndex: paymentIndex,
+      title: `${guest.firstname} ${guest.lastname}`.trim(),
+      amount: Number(amount),
+      paymentType: type,
+      paidAt: guest.payments[paymentIndex].createdAt || new Date(),
+      note,
+    });
 
     emitGuestChanged(req.app.get("socket"), {
       guestId: String(guest._id),

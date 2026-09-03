@@ -1,6 +1,7 @@
 const HallBooking = require("../model/HallBooking");
 const Employee = require("../model/Employee");
 const response = require("../utils/response");
+const { recordCashTransaction } = require("../utils/cashRegister");
 
 const buildCreatedBy = async (user) => {
   const actor = {
@@ -216,9 +217,21 @@ const addHallBookingPayment = async (req, res) => {
       type: String(req.body.type || "naqd"),
       note: String(req.body.note || "").trim(),
     });
+    const paymentIndex = booking.payments.length - 1;
     booking.paidAmount = Number(booking.paidAmount || 0) + amount;
     booking.debtAmount = Math.max(Number(booking.totalAmount || 0) - booking.paidAmount, 0);
     await booking.save();
+    await recordCashTransaction({
+      user: req.admin,
+      sourceType: "hall",
+      sourceId: booking._id,
+      sourcePaymentIndex: paymentIndex,
+      title: `Zal: ${`${booking.customerFirstname || ""} ${booking.customerLastname || ""}`.trim() || booking.eventName || "Ijara"}`,
+      amount,
+      paymentType: booking.payments[paymentIndex].type,
+      paidAt: booking.payments[paymentIndex].createdAt || new Date(),
+      note: booking.payments[paymentIndex].note,
+    });
 
     return response.success(
       res,

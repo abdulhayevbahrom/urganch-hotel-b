@@ -41,10 +41,18 @@ const updateSettings = async (req, res) => {
     }
 
     const current = await getHotelSettings();
+    const checkin = parseTime(updates.checkinTime || current.checkinTime);
     const checkout = parseTime(updates.checkoutTime || current.checkoutTime);
     const reminder = parseTime(updates.reminderTime || current.reminderTime);
+    const checkinMinutes = checkin.hour * 60 + checkin.minute;
     const checkoutMinutes = checkout.hour * 60 + checkout.minute;
     const reminderMinutes = reminder.hour * 60 + reminder.minute;
+    if (checkinMinutes >= checkoutMinutes) {
+      return response.error(
+        res,
+        "Kirish vaqti chiqish vaqtidan oldin bo'lishi kerak",
+      );
+    }
     if (reminderMinutes >= checkoutMinutes) {
       return response.error(
         res,

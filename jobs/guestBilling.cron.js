@@ -36,6 +36,7 @@ const buildBillingState = (
     checkInAt,
     safeStayDays,
     hotelSettings.checkoutTime || "12:00",
+    hotelSettings.checkinTime || "09:00",
   );
 
   const checkoutReminderAt = applyTimeToDate(

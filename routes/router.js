@@ -20,6 +20,11 @@ const {
 } = require("../validations/expense.validation");
 const { updateSettingsSchema } = require("../validations/setting.validation");
 const {
+  closeCashSchema,
+  cashClosureIdParamsSchema,
+  decideCashClosureSchema,
+} = require("../validations/cash.validation");
+const {
   createGroupBookingSchema,
   updateGroupBookingSchema,
   groupBookingIdParamsSchema,
@@ -53,6 +58,11 @@ const {
   deleteExpensesBulk,
 } = require("../controllers/expense.controller");
 const { getDashboardSummary } = require("../controllers/dashboard.controller");
+const {
+  getCashSummary,
+  closeCash,
+  decideCashClosure,
+} = require("../controllers/cash.controller");
 const { getDailyReport, getReportsSummary } = require("../controllers/reports.controller");
 const {
   getSettings,
@@ -173,6 +183,14 @@ router.put(
 router.delete("/room/:id", validate(roomIdParamsSchema, "params"), deleteRoom);
 router.post("/expense", validate(createExpenseSchema), createExpense);
 router.get("/dashboard", getDashboardSummary);
+router.get("/cash", getCashSummary);
+router.post("/cash/close", validate(closeCashSchema), closeCash);
+router.post(
+  "/cash/closures/:id/decision",
+  validate(cashClosureIdParamsSchema, "params"),
+  validate(decideCashClosureSchema),
+  decideCashClosure,
+);
 router.get("/reports-summary", getReportsSummary);
 router.get("/reports-daily", getDailyReport);
 router.get("/expenses", getExpenses);

@@ -6,6 +6,7 @@ const updateSettingsSchema = {
   minProperties: 1,
   properties: {
     hotelName: { type: "string", minLength: 1, maxLength: 120 },
+    checkinTime: { type: "string", pattern: timePattern },
     checkoutTime: { type: "string", pattern: timePattern },
     reminderTime: { type: "string", pattern: timePattern },
     roomCategories: {

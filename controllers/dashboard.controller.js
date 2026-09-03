@@ -3,6 +3,8 @@ const Guest = require("../model/Guest");
 const Expense = require("../model/Expense");
 const Room = require("../model/Room");
 const response = require("../utils/response");
+const { getDailyRateForDay } = require("../utils/guestDailyRates");
+const { getHotelSettings, parseTime } = require("../utils/hotelSettings");
 
 const TIMEZONE = process.env.APP_TIMEZONE || "Asia/Tashkent";
 const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
@@ -84,6 +86,61 @@ const getHistoricalRevenue = async (
     previousMonthRevenue: Number(result?.previousMonthTotal?.[0]?.total || 0),
     previousDayRevenue: Number(result?.previousDayTotal?.[0]?.total || 0),
   };
+};
+
+const getStayDayForDate = (
+  checkInAt,
+  targetAt,
+  checkoutTime = "12:00",
+  checkinTime = "09:00",
+) => {
+  const checkIn = moment(checkInAt).tz(TIMEZONE);
+  const target = moment(targetAt).tz(TIMEZONE);
+  if (!checkIn.isValid() || !target.isValid()) return 1;
+
+  const checkin = parseTime(checkinTime);
+  const checkout = parseTime(checkoutTime);
+  const checkinMinutes = checkin.hour * 60 + checkin.minute;
+  const checkoutMinutes = checkout.hour * 60 + checkout.minute;
+  const checkInMinutes = checkIn.hour() * 60 + checkIn.minute();
+  const targetMinutes = target.hour() * 60 + target.minute();
+  const checkInOperationalDay = checkIn.clone().startOf("day");
+  const targetOperationalDay = target.clone().startOf("day");
+
+  if (checkInMinutes < checkinMinutes) checkInOperationalDay.subtract(1, "day");
+  if (targetMinutes <= checkoutMinutes) targetOperationalDay.subtract(1, "day");
+
+  return Math.max(targetOperationalDay.diff(checkInOperationalDay, "day") + 1, 1);
+};
+
+const getTodayExpectedBilling = (guests = [], targetAt, settings = {}) => {
+  return guests.reduce(
+    (totals, guest) => {
+      if (guest?.vip) return totals;
+      const day = getStayDayForDate(
+        guest.checkInAt,
+        targetAt,
+        settings.checkoutTime || "12:00",
+        settings.checkinTime || "09:00",
+      );
+      const expectedAmount = getDailyRateForDay(guest, day);
+      const paidAmount = (guest.payments || []).reduce((sum, payment) => {
+        const paidAt = moment(payment?.createdAt).tz(TIMEZONE);
+        if (
+          paidAt.isValid() &&
+          paidAt.isSame(moment(targetAt).tz(TIMEZONE), "day")
+        ) {
+          return sum + Number(payment?.amount || 0);
+        }
+        return sum;
+      }, 0);
+
+      totals.expected += Number(expectedAmount || 0);
+      totals.paid += Number(paidAmount || 0);
+      return totals;
+    },
+    { expected: 0, paid: 0 },
+  );
 };
 
 const getDashboardSummary = async (req, res) => {
@@ -265,8 +322,9 @@ const getDashboardSummary = async (req, res) => {
       $or: [{ checkOutAt: null }, { checkOutAt: { $gte: monthStart.toDate() } }],
     };
 
-    const [activeGuests, bookedGuests, debtorsAgg = {}, arrivedCount, leftCount, pendingNextDayCount, vipCount, expensesFacet = {}, roomsFacet = {}] =
+    const [hotelSettings, activeGuests, bookedGuests, debtorsAgg = {}, arrivedCount, leftCount, pendingNextDayCount, vipCount, activeTodayGuests, expensesFacet = {}, roomsFacet = {}] =
       await Promise.all([
+        getHotelSettings(),
         Guest.countDocuments({
           ...overlapMonthFilter,
           status: "active",
@@ -305,6 +363,16 @@ const getDashboardSummary = async (req, res) => {
           checkInAt: { $lte: nextDayStart.toDate() },
           $or: [{ checkOutAt: null }, { checkOutAt: { $gte: anchorDayStart.toDate() } }],
         }),
+        Guest.find({
+          status: "active",
+          checkInAt: { $lt: nextDayStart.toDate() },
+          $or: [
+            { checkoutDueAt: null },
+            { checkoutDueAt: { $gt: anchorDayStart.toDate() } },
+          ],
+        })
+          .select("checkInAt checkoutDueAt dailyRate dailyRates stayDays payments vip")
+          .lean(),
         Expense.aggregate([
           {
             $match: {
@@ -327,6 +395,36 @@ const getDashboardSummary = async (req, res) => {
                 },
               ],
               monthlyTotal: [
+                {
+                  $group: {
+                    _id: null,
+                    total: { $sum: { $ifNull: ["$amount", 0] } },
+                  },
+                },
+              ],
+              salaryTotal: [
+                {
+                  $match: {
+                    $expr: {
+                      $or: [
+                        {
+                          $regexMatch: {
+                            input: { $ifNull: ["$category", ""] },
+                            regex: "oylik|maosh|salary",
+                            options: "i",
+                          },
+                        },
+                        {
+                          $regexMatch: {
+                            input: { $ifNull: ["$title", ""] },
+                            regex: "oylik|maosh|salary",
+                            options: "i",
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
                 {
                   $group: {
                     _id: null,
@@ -369,6 +467,18 @@ const getDashboardSummary = async (req, res) => {
         ]).then((result) => result?.[0] || {}),
       ]);
 
+    const todayExpectedBilling = getTodayExpectedBilling(
+      activeTodayGuests,
+      anchor.toDate(),
+      hotelSettings,
+    );
+    const todayExpectedRevenue = Number(todayExpectedBilling.expected || 0);
+    const todayExpectedPaid = Number(todayExpectedBilling.paid || 0);
+    const todayExpectedDebt = Math.max(
+      todayExpectedRevenue - todayExpectedPaid,
+      0,
+    );
+
     const expenseDailyMap = new Map(
       (expensesFacet?.daily || []).map((item) => [
         Number(item?._id || 0),
@@ -380,6 +490,9 @@ const getDashboardSummary = async (req, res) => {
       value: Number(expenseDailyMap.get(index + 1) || 0),
     }));
     const expensesTotal = Number(expensesFacet?.monthlyTotal?.[0]?.total || 0);
+    const salariesPaid = Number(expensesFacet?.salaryTotal?.[0]?.total || 0);
+    const monthlyExpenses = Math.max(expensesTotal - salariesPaid, 0);
+    const balance = monthRevenue - monthlyExpenses - salariesPaid;
     const monthlyChart = {
       labels: Array.from({ length: daysInMonth }, (_, index) => String(index + 1)),
       revenue: monthlySeries.map((item) => Number(item?.value || 0)),
@@ -420,6 +533,9 @@ const getDashboardSummary = async (req, res) => {
       generatedAt: new Date().toISOString(),
       kpis: {
         todayRevenue,
+        todayExpectedRevenue,
+        todayExpectedPaid,
+        todayExpectedDebt,
         yesterdayRevenue,
         todayChange: formatChange(todayRevenue, yesterdayRevenue),
         monthRevenue,
@@ -430,6 +546,9 @@ const getDashboardSummary = async (req, res) => {
         bookedGuests: Number(bookedGuests || 0),
         debtorsCount: Number(debtorsAgg?.count || 0),
         debtorsAmount: Number(debtorsAgg?.totalDebt || 0),
+        monthlyExpenses,
+        salariesPaid,
+        balance,
       },
       dailySnapshot: {
         date: anchorDayStart.format("YYYY-MM-DD"),
@@ -444,6 +563,7 @@ const getDashboardSummary = async (req, res) => {
       monthlyChart,
       roomOverview,
       expensesTotal,
+      salariesPaid,
     });
   } catch (error) {
     return response.serverError(res, error.message);
@@ -452,4 +572,6 @@ const getDashboardSummary = async (req, res) => {
 
 module.exports = {
   getDashboardSummary,
+  getStayDayForDate,
+  getTodayExpectedBilling,
 };

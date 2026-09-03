@@ -9,7 +9,7 @@ const Service = require("../model/Service");
 const Expense = require("../model/Expense");
 const HallBooking = require("../model/HallBooking");
 const VipRequest = require("../model/VipRequest");
-const { getHotelSettings, applyTimeToDate } = require("../utils/hotelSettings");
+const { getHotelSettings, applyTimeToDate, calculateCheckoutDueAt } = require("../utils/hotelSettings");
 
 mongoose.plugin(applyTimezone);
 
@@ -45,8 +45,12 @@ const makeCurrentMonthDate = (dayIndex, hour = 10, minute = 0) => {
 
 const buildBilling = (checkInAt, stayDays, dailyRate, settings, now = new Date()) => {
   const safeStayDays = Math.max(Number(stayDays || 1), 1);
-  const checkoutDueAt = applyTimeToDate(checkInAt, settings.checkoutTime || "15:00");
-  checkoutDueAt.setDate(checkoutDueAt.getDate() + safeStayDays);
+  const checkoutDueAt = calculateCheckoutDueAt(
+    checkInAt,
+    safeStayDays,
+    settings.checkoutTime || "12:00",
+    settings.checkinTime || "09:00",
+  );
 
   const checkoutReminderAt = applyTimeToDate(
     checkoutDueAt,

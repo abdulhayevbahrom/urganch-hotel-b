@@ -9,7 +9,12 @@ const settingSchema = new mongoose.Schema(
     },
     checkoutTime: {
       type: String,
-      default: "15:00",
+      default: "12:00",
+      trim: true,
+    },
+    checkinTime: {
+      type: String,
+      default: "09:00",
       trim: true,
     },
     reminderTime: {

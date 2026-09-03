@@ -4,12 +4,14 @@ const Room = require("../model/Room");
 const VipRequest = require("../model/VipRequest");
 const response = require("../utils/response");
 const { syncRoomsOccupancyByIds } = require("../utils/roomOccupancy");
-const { getHotelSettings, applyTimeToDate } = require("../utils/hotelSettings");
+const { getHotelSettings, applyTimeToDate, parseTime } = require("../utils/hotelSettings");
+const { recordCashTransaction } = require("../utils/cashRegister");
 
-const parseBookingStart = (value) => {
+const parseBookingStart = (value, checkinTime = "09:00") => {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
-  date.setHours(12, 0, 0, 0);
+  const checkin = parseTime(checkinTime);
+  date.setHours(checkin.hour, checkin.minute, 0, 0);
   return date;
 };
 
@@ -28,7 +30,8 @@ const createGroupBooking = async (req, res) => {
       return response.error(res, "Bir xona guruhga faqat bir marta tanlanadi");
     }
 
-    const bookedForAt = parseBookingStart(req.body.bookedForDate);
+    const settings = await getHotelSettings();
+    const bookedForAt = parseBookingStart(req.body.bookedForDate, settings.checkinTime);
     if (!bookedForAt) return response.error(res, "Bron sanasi noto'g'ri");
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -53,7 +56,6 @@ const createGroupBooking = async (req, res) => {
       }
     }
 
-    const settings = await getHotelSettings();
     const stayDays = Math.max(Number(req.body.stayDays || 1), 1);
     const checkoutDueAt = buildBookingEnd(
       bookedForAt,
@@ -259,7 +261,19 @@ const addGroupPayment = async (req, res) => {
       type: req.body.type,
       note: req.body.note || "",
     });
+    const paymentIndex = group.payments.length - 1;
     await group.save();
+    await recordCashTransaction({
+      user: req.admin,
+      sourceType: "group",
+      sourceId: group._id,
+      sourcePaymentIndex: paymentIndex,
+      title: `Guruh: ${group.name}`,
+      amount,
+      paymentType: req.body.type,
+      paidAt: group.payments[paymentIndex].createdAt || new Date(),
+      note: req.body.note || "",
+    });
 
     req.app.get("socket")?.emit("guest_updated", {
       reason: "group_payment_added",
