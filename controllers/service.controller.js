@@ -49,7 +49,7 @@ const updateService = async (req, res) => {
     }
 
     const service = await Service.findByIdAndUpdate(req.params.id, updates, {
-      new: true,
+      returnDocument: "after",
       runValidators: true,
     });
     if (!service) return response.notFound(res, "Xizmat topilmadi");

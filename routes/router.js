@@ -16,8 +16,15 @@ const {
   createExpenseSchema,
   updateExpenseSchema,
   expenseIdParamsSchema,
+  deleteExpensesBulkSchema,
 } = require("../validations/expense.validation");
 const { updateSettingsSchema } = require("../validations/setting.validation");
+const {
+  createGroupBookingSchema,
+  updateGroupBookingSchema,
+  groupBookingIdParamsSchema,
+  addGroupPaymentSchema,
+} = require("../validations/groupBooking.validation");
 const {
   createEmployee,
   getEmployees,
@@ -35,13 +42,18 @@ const {
   deleteRoom,
 } = require("../controllers/room.controller");
 const {
+  uploadRoomImages,
+  parseRoomMultipartBody,
+} = require("../middleware/roomImageUpload.middleware");
+const {
   createExpense,
   getExpenses,
   updateExpense,
   deleteExpense,
+  deleteExpensesBulk,
 } = require("../controllers/expense.controller");
 const { getDashboardSummary } = require("../controllers/dashboard.controller");
-const { getReportsSummary } = require("../controllers/reports.controller");
+const { getDailyReport, getReportsSummary } = require("../controllers/reports.controller");
 const {
   getSettings,
   updateSettings,
@@ -53,7 +65,11 @@ const {
   updateGuestSchema,
   guestIdParamsSchema,
   guestPassportParamsSchema,
+  guestPaymentParamsSchema,
+  bulkCheckoutGuestsSchema,
+  continueGuestStaySchema,
   addPaymentSchema,
+  updatePaymentSchema,
   addGuestServiceSchema,
   vipRequestIdParamsSchema,
   decideVipRequestSchema,
@@ -84,8 +100,11 @@ const {
   decideVipRequest,
   updateGuest,
   addGuestPayment,
+  updateGuestPayment,
   addGuestService,
   checkoutGuest,
+  continueGuestStay,
+  checkoutGuestsBulk,
   deleteGuest,
 } = require("../controllers/guest.controller");
 const {
@@ -102,6 +121,13 @@ const {
   cancelHallBooking,
   deleteHallBooking,
 } = require("../controllers/hallBooking.controller");
+const {
+  createGroupBooking,
+  getGroupBookings,
+  updateGroupBooking,
+  deleteGroupBooking,
+  addGroupPayment,
+} = require("../controllers/groupBooking.controller");
 
 router.post("/employee/login", validate(loginEmployeeSchema), loginEmployee);
 router.post(
@@ -127,12 +153,20 @@ router.delete(
   validate(employeeIdParamsSchema, "params"),
   deleteEmployee,
 );
-router.post("/room", validate(createRoomSchema), createRoom);
+router.post(
+  "/group-booking/:id/payment",
+  validate(groupBookingIdParamsSchema, "params"),
+  validate(addGroupPaymentSchema),
+  addGroupPayment,
+);
+router.post("/room", uploadRoomImages, parseRoomMultipartBody, validate(createRoomSchema), createRoom);
 router.get("/rooms", getRooms);
 router.get("/room/:id", validate(roomIdParamsSchema, "params"), getRoomById);
 router.put(
   "/room/:id",
   validate(roomIdParamsSchema, "params"),
+  uploadRoomImages,
+  parseRoomMultipartBody,
   validate(updateRoomSchema),
   updateRoom,
 );
@@ -140,7 +174,13 @@ router.delete("/room/:id", validate(roomIdParamsSchema, "params"), deleteRoom);
 router.post("/expense", validate(createExpenseSchema), createExpense);
 router.get("/dashboard", getDashboardSummary);
 router.get("/reports-summary", getReportsSummary);
+router.get("/reports-daily", getDailyReport);
 router.get("/expenses", getExpenses);
+router.delete(
+  "/expenses/bulk",
+  validate(deleteExpensesBulkSchema),
+  deleteExpensesBulk,
+);
 router.put(
   "/expense/:id",
   validate(expenseIdParamsSchema, "params"),
@@ -196,6 +236,23 @@ router.delete(
   deleteHallBooking,
 );
 router.post("/guest", validate(createGuestSchema), createGuest);
+router.post(
+  "/group-booking",
+  validate(createGroupBookingSchema),
+  createGroupBooking,
+);
+router.get("/group-bookings", getGroupBookings);
+router.put(
+  "/group-booking/:id",
+  validate(groupBookingIdParamsSchema, "params"),
+  validate(updateGroupBookingSchema),
+  updateGroupBooking,
+);
+router.delete(
+  "/group-booking/:id",
+  validate(groupBookingIdParamsSchema, "params"),
+  deleteGroupBooking,
+);
 router.post("/guests/bulk", validate(createGuestsBulkSchema), createGuestsBulk);
 router.get("/guests", getGuests);
 router.get("/occupancy", getOccupancy);
@@ -225,6 +282,12 @@ router.post(
   validate(addPaymentSchema),
   addGuestPayment,
 );
+router.put(
+  "/guest/:id/payment/:paymentIndex",
+  validate(guestPaymentParamsSchema, "params"),
+  validate(updatePaymentSchema),
+  updateGuestPayment,
+);
 router.post(
   "/guest/:id/service",
   validate(guestIdParamsSchema, "params"),
@@ -235,6 +298,17 @@ router.post(
   "/guest/:id/checkout",
   validate(guestIdParamsSchema, "params"),
   checkoutGuest,
+);
+router.post(
+  "/guest/:id/continue",
+  validate(guestIdParamsSchema, "params"),
+  validate(continueGuestStaySchema),
+  continueGuestStay,
+);
+router.post(
+  "/guests/checkout-bulk",
+  validate(bulkCheckoutGuestsSchema),
+  checkoutGuestsBulk,
 );
 router.delete("/guest/:id", validate(guestIdParamsSchema, "params"), deleteGuest);
 router.post(

@@ -11,6 +11,7 @@ const connectDB = async () => {
     console.log("MongoDBga muvaffaqiyatli ulanildi ✅✅✅");
   } catch (error) {
     console.error("MongoDB ulanish xatosi ❌❌❌:", error);
+    throw error;
   }
 };
 

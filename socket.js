@@ -1,9 +1,10 @@
 const jwt = require("jsonwebtoken");
 const VipRequest = require("./model/VipRequest");
+const { hasFullAccess } = require("./utils/roleAccess");
 
 const canManageVip = (payload) => {
   if (!payload) return false;
-  return String(payload.role || "").toLowerCase() === "admin";
+  return hasFullAccess(payload.role);
 };
 
 const resolveToken = (socket) => {
@@ -45,7 +46,7 @@ class SocketService {
 
       socket.on("register-user", (data = {}) => {
         const role = String(data.role || "").toLowerCase();
-        if (role === "admin") {
+        if (hasFullAccess(role)) {
           socket.join("vip-admins");
           emitPendingVipCountToSocket(socket).catch(() => {});
         }

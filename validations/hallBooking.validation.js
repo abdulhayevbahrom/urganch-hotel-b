@@ -56,7 +56,7 @@ const addHallBookingPaymentSchema = {
   required: ["amount", "type"],
   properties: {
     amount: { type: "number", minimum: 1, multipleOf: 1 },
-    type: { type: "string", enum: ["naqd", "click", "bank", "karta"] },
+    type: { type: "string", enum: ["naqd", "bank", "karta"] },
     note: { type: "string" },
   },
 };

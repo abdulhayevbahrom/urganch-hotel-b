@@ -8,6 +8,11 @@ const updateSettingsSchema = {
     hotelName: { type: "string", minLength: 1, maxLength: 120 },
     checkoutTime: { type: "string", pattern: timePattern },
     reminderTime: { type: "string", pattern: timePattern },
+    roomCategories: {
+      type: "array",
+      minItems: 1,
+      items: { type: "string", minLength: 1, maxLength: 60 },
+    },
     logo: { type: "string" },
     receiptThankYouText: { type: "string" },
   },

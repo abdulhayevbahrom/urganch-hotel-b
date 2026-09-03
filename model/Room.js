@@ -5,13 +5,18 @@ const roomSchema = new mongoose.Schema(
     roomNumber: {
       type: String,
       required: true,
-      unique: true,
       trim: true,
     },
     floor: {
       type: Number,
       required: true,
       min: 1,
+    },
+    korpus: {
+      type: String,
+      required: true,
+      enum: ["A", "B"],
+      trim: true,
     },
     capacity: {
       type: Number,
@@ -27,7 +32,7 @@ const roomSchema = new mongoose.Schema(
     category: {
       type: String,
       required: true,
-      enum: ["standart", "polulyuks", "lyuks", "apartament", "bir_kishilik"],
+      trim: true,
     },
     status: {
       type: String,
@@ -43,11 +48,20 @@ const roomSchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+    images: {
+      type: [{ type: String, trim: true }],
+      default: [],
+      validate: {
+        validator: (images) => images.length <= 8,
+        message: "Ko'pi bilan 8 ta rasm saqlanishi mumkin",
+      },
+    },
   },
   { timestamps: true },
 );
 
-roomSchema.index({ floor: 1, roomNumber: 1 });
+roomSchema.index({ korpus: 1, roomNumber: 1 }, { unique: true });
 roomSchema.index({ floor: 1, category: 1 });
+roomSchema.index({ korpus: 1, floor: 1, roomNumber: 1 });
 
 module.exports = mongoose.model("Room", roomSchema);

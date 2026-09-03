@@ -23,7 +23,7 @@ const expenseSchema = new mongoose.Schema(
     // To'lov turi
     paymentType: {
       type: String,
-      enum: ["naqd", "karta", "click", "bank"],
+      enum: ["naqd", "karta", "bank"],
       required: true,
       default: "naqd",
     },

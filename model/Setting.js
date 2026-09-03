@@ -17,6 +17,10 @@ const settingSchema = new mongoose.Schema(
       default: "12:00",
       trim: true,
     },
+    roomCategories: {
+      type: [String],
+      default: ["standart", "polulyuks", "lyuks", "apartament", "bir_kishilik"],
+    },
     logo: {
       type: String,
       default: "",

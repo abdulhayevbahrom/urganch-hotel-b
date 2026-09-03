@@ -153,7 +153,7 @@ const updateEmployee = async (req, res) => {
     }
 
     const employee = await Employee.findByIdAndUpdate(id, updateQuery, {
-      new: true,
+      returnDocument: "after",
       runValidators: true,
     });
 
@@ -228,6 +228,7 @@ const loginEmployee = async (req, res) => {
         id: employee._id,
         firstname: employee.firstname,
         lastname: employee.lastname,
+        position: employee.position,
         role: normalizedRole,
         sections: employee.sections || [],
       },
@@ -269,6 +270,7 @@ const refreshEmployeeToken = async (req, res) => {
         id: employee._id,
         firstname: employee.firstname,
         lastname: employee.lastname,
+        position: employee.position,
         role: String(employee.position || "").toLowerCase().trim(),
         sections: employee.sections || [],
       },

@@ -4,9 +4,13 @@ const Guest = require("../model/Guest");
 const Room = require("../model/Room");
 const {
   applyTimeToDate,
+  calculateCheckoutDueAt,
   getHotelSettings,
   parseTime,
 } = require("../utils/hotelSettings");
+const {
+  syncRoomsOccupancyByIds,
+} = require("../utils/roomOccupancy");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const APP_TIMEZONE = process.env.APP_TIMEZONE || "Asia/Tashkent";
@@ -28,11 +32,11 @@ const buildBillingState = (
 ) => {
   const safeStayDays = Math.max(Number(stayDays || 1), 1);
 
-  const checkoutDueAt = applyTimeToDate(
+  const checkoutDueAt = calculateCheckoutDueAt(
     checkInAt,
-    hotelSettings.checkoutTime || "15:00",
+    safeStayDays,
+    hotelSettings.checkoutTime || "12:00",
   );
-  checkoutDueAt.setDate(checkoutDueAt.getDate() + safeStayDays);
 
   const checkoutReminderAt = applyTimeToDate(
     checkoutDueAt,
@@ -51,74 +55,10 @@ const buildBillingState = (
   };
 };
 
-const syncRoomsOccupancyByIds = async (roomIds = []) => {
-  const normalizedRoomIds = [
-    ...new Set(
-      roomIds
-        .map((id) => String(id || "").trim())
-        .filter((id) => mongoose.Types.ObjectId.isValid(id)),
-    ),
-  ];
-  if (!normalizedRoomIds.length) return;
-  const objectRoomIds = normalizedRoomIds.map((id) => new mongoose.Types.ObjectId(id));
-
-  const [rooms, activeCounts] = await Promise.all([
-    Room.find({ _id: { $in: objectRoomIds } })
-      .select("_id capacity status activeGuestsCount")
-      .lean(),
-    Guest.aggregate([
-      {
-        $match: {
-          status: "active",
-          room: { $in: objectRoomIds },
-        },
-      },
-      {
-        $group: {
-          _id: "$room",
-          count: { $sum: 1 },
-        },
-      },
-    ]),
-  ]);
-
-  const activeMap = new Map(
-    activeCounts.map((item) => [String(item?._id || ""), Number(item?.count || 0)]),
-  );
-  const ops = [];
-  for (const room of rooms) {
-    const roomId = String(room?._id || "");
-    const activeCount = Number(activeMap.get(roomId) || 0);
-    const nextStatus =
-      room.status === "remont"
-        ? "remont"
-        : activeCount >= Number(room.capacity || 0)
-          ? "band"
-          : "bosh";
-
-    if (
-      Number(room.activeGuestsCount || 0) === activeCount &&
-      String(room.status || "") === nextStatus
-    ) {
-      continue;
-    }
-
-    ops.push({
-      updateOne: {
-        filter: { _id: room._id },
-        update: {
-          $set: {
-            activeGuestsCount: activeCount,
-            status: nextStatus,
-          },
-        },
-      },
-    });
-  }
-
-  if (ops.length) {
-    await Room.bulkWrite(ops, { ordered: false });
-  }
+const syncAllRoomsOccupancy = async () => {
+  const rooms = await Room.find({}).select("_id").lean();
+  if (!rooms.length) return;
+  await syncRoomsOccupancyByIds(rooms.map((room) => room._id));
 };
 
 const runActivateDueBookingsJob = async (io) => {
@@ -328,13 +268,100 @@ const runReminderJob = async (io, targetDate) => {
   });
 };
 
+const runAutomaticCheckoutJob = async (io, cutoffAt = new Date()) => {
+  const cutoff = new Date(cutoffAt);
+  const guests = await Guest.find({
+    status: "active",
+    checkoutDueAt: { $lte: cutoff },
+  })
+    .select("_id room checkoutDueAt")
+    .lean();
+
+  if (!guests.length) return;
+
+  const roomIds = [];
+  const ops = guests.map((guest) => {
+    if (guest?.room) roomIds.push(String(guest.room));
+    return {
+      updateOne: {
+        filter: { _id: guest._id, status: "active" },
+        update: {
+          $set: {
+            status: "checked_out",
+            checkOutAt: getAutomaticCheckoutAt(guest.checkoutDueAt, cutoff),
+            checkoutBy: {
+              userId: "system",
+              role: "system",
+              login: "system",
+              firstname: "Auto",
+              lastname: "Checkout",
+            },
+          },
+        },
+      },
+    };
+  });
+
+  if (!ops.length) return;
+
+  await Guest.bulkWrite(ops, { ordered: false });
+  await syncRoomsOccupancyByIds(roomIds);
+  await syncAllRoomsOccupancy();
+  emitGuestChanged(io, {
+    reason: "guest_auto_checked_out",
+    count: ops.length,
+    roomIds,
+  });
+};
+
+const getAutomaticCheckoutAt = (checkoutDueAt, executedAt = new Date()) => {
+  const scheduled = new Date(checkoutDueAt);
+  if (!Number.isNaN(scheduled.getTime())) return scheduled;
+  return new Date(executedAt);
+};
+
+const getAutomaticCheckoutWindow = (
+  now = new Date(),
+  checkoutTime = "12:00",
+) => {
+  const nowTz = moment(now).tz(APP_TIMEZONE);
+  const checkout = parseTime(checkoutTime);
+  const scheduledCheckout = nowTz
+    .clone()
+    .hour(checkout.hour)
+    .minute(checkout.minute)
+    .second(0)
+    .millisecond(0);
+  const nextMinute = nowTz.clone().add(1, "minute").startOf("minute");
+  const isEarlyMinute =
+    nextMinute.hour() === checkout.hour &&
+    nextMinute.minute() === checkout.minute;
+  const isExactMinute =
+    nowTz.hour() === checkout.hour && nowTz.minute() === checkout.minute;
+  const isDueOrPast =
+    isExactMinute || nowTz.isAfter(scheduledCheckout);
+  const cutoff = isEarlyMinute
+    ? nextMinute
+    : nowTz.clone();
+
+  return {
+    isEarlyMinute,
+    isExactMinute,
+    isDueOrPast,
+    cutoffAt: cutoff.toDate(),
+    key: `${cutoff.format("YYYY-MM-DD")}-${checkoutTime}`,
+  };
+};
+
 // Har daqiqada tekshiradi va sozlamadagi vaqtlar bo'yicha vazifalarni bir martadan ishga tushiradi
 const startGuestBillingCron = (io) => {
   const state = {
     reminderKey: "",
     overdueKey: "",
+    checkoutKey: "",
     activating: false,
     overdueRunning: false,
+    checkoutRunning: false,
   };
 
   const tick = async () => {
@@ -345,7 +372,10 @@ const startGuestBillingCron = (io) => {
       const minute = nowTz.minute();
       const hotelSettings = await getHotelSettings();
       const reminder = parseTime(hotelSettings.reminderTime);
-      const checkout = parseTime(hotelSettings.checkoutTime);
+      const automaticCheckout = getAutomaticCheckoutWindow(
+        nowTz.toDate(),
+        hotelSettings.checkoutTime,
+      );
 
       if (hour === reminder.hour && minute === reminder.minute) {
         const reminderKey = `${dayKey}-${hotelSettings.reminderTime}`;
@@ -364,8 +394,37 @@ const startGuestBillingCron = (io) => {
         }
       }
 
-      if (hour === checkout.hour && minute === checkout.minute) {
-        const overdueKey = `${dayKey}-${hotelSettings.checkoutTime}`;
+      // Belgilangan checkout vaqtidan bir daqiqa oldin avtomatik checkout
+      // qilamiz. checkOutAt baribir rejalashtirilgan checkoutDueAt bo'lib qoladi.
+      if (
+        automaticCheckout.isEarlyMinute &&
+        state.checkoutKey !== automaticCheckout.key &&
+        !state.checkoutRunning
+      ) {
+        state.checkoutRunning = true;
+        try {
+          await runAutomaticCheckoutJob(io, automaticCheckout.cutoffAt);
+          state.checkoutKey = automaticCheckout.key;
+        } finally {
+          state.checkoutRunning = false;
+        }
+      }
+
+      if (automaticCheckout.isDueOrPast && !automaticCheckout.isEarlyMinute) {
+        const overdueKey = automaticCheckout.key;
+
+        // 11:59 trigger o'tmay qolsa, 12:00 da ham avval checkout qilinadi.
+        // Shundan keyingina overdue hisoblash ishlaydi va ortiqcha kun yozilmaydi.
+        if (state.checkoutKey !== overdueKey && !state.checkoutRunning) {
+          state.checkoutRunning = true;
+          try {
+            await runAutomaticCheckoutJob(io, nowTz.toDate());
+            state.checkoutKey = overdueKey;
+          } finally {
+            state.checkoutRunning = false;
+          }
+        }
+
         if (state.overdueKey !== overdueKey && !state.overdueRunning) {
           state.overdueRunning = true;
           state.overdueKey = overdueKey;
@@ -375,6 +434,7 @@ const startGuestBillingCron = (io) => {
             state.overdueRunning = false;
           }
         }
+
       }
     } catch (error) {
       // eslint-disable-next-line no-console
@@ -382,14 +442,25 @@ const startGuestBillingCron = (io) => {
     }
   };
 
-  // Server yoqilganda bir martalik tekshiruv
-  runActivateDueBookingsJob(io).catch(() => {});
-  runOverdueBillingJob(io).catch(() => {});
+  // Server yoqilganda ham checkout overdue hisobidan oldin ishlashi shart.
+  // Aks holda server 12:00 dan bir necha soniya keyin ishga tushsa,
+  // chiqayotgan mijozga ortiqcha kun yozilishi mumkin.
+  const runStartupJobs = async () => {
+    await runActivateDueBookingsJob(io);
+    await runAutomaticCheckoutJob(io);
+    await runOverdueBillingJob(io);
+  };
+  runStartupJobs().catch((error) => {
+    // eslint-disable-next-line no-console
+    console.error("Guest billing startup error:", error.message);
+  });
   // Har 30 sekundda vaqt triggerini tekshiradi
   const interval = setInterval(tick, 30 * 1000);
   return interval;
 };
 
 module.exports = {
+  getAutomaticCheckoutAt,
+  getAutomaticCheckoutWindow,
   startGuestBillingCron,
 };
