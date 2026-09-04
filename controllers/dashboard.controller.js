@@ -137,9 +137,13 @@ const getTodayExpectedBilling = (guests = [], targetAt, settings = {}) => {
 
       totals.expected += Number(expectedAmount || 0);
       totals.paid += Number(paidAmount || 0);
+      totals.debt += Math.max(
+        Number(expectedAmount || 0) - Number(paidAmount || 0),
+        0,
+      );
       return totals;
     },
-    { expected: 0, paid: 0 },
+    { expected: 0, paid: 0, debt: 0 },
   );
 };
 
@@ -474,10 +478,7 @@ const getDashboardSummary = async (req, res) => {
     );
     const todayExpectedRevenue = Number(todayExpectedBilling.expected || 0);
     const todayExpectedPaid = Number(todayExpectedBilling.paid || 0);
-    const todayExpectedDebt = Math.max(
-      todayExpectedRevenue - todayExpectedPaid,
-      0,
-    );
+    const todayExpectedDebt = Number(todayExpectedBilling.debt || 0);
 
     const expenseDailyMap = new Map(
       (expensesFacet?.daily || []).map((item) => [

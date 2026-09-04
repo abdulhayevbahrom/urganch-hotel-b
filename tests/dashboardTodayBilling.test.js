@@ -45,5 +45,37 @@ test("dashboard expected billing uses the current hotel stay day", () => {
   assert.deepEqual(getTodayExpectedBilling(guests, targetAt, settings), {
     expected: 1380000,
     paid: 380000,
+    debt: 1000000,
   });
+});
+
+test("one guest's extra payment does not cover another guest's daily debt", () => {
+  const settings = { checkinTime: "09:00", checkoutTime: "12:00" };
+  const targetAt = new Date("2026-09-04T10:00:00+05:00");
+  const result = getTodayExpectedBilling(
+    [
+      {
+        vip: false,
+        checkInAt: "2026-09-04T01:06:00+05:00",
+        stayDays: 2,
+        dailyRate: 233333,
+        dailyRates: [],
+        payments: [{ amount: 466666, type: "naqd", createdAt: "2026-09-04T01:06:00+05:00" }],
+      },
+      {
+        vip: false,
+        checkInAt: "2026-09-02T13:08:00+05:00",
+        stayDays: 3,
+        dailyRate: 400000,
+        dailyRates: [],
+        payments: [],
+      },
+    ],
+    targetAt,
+    settings,
+  );
+
+  assert.equal(result.expected, 633333);
+  assert.equal(result.paid, 466666);
+  assert.equal(result.debt, 400000);
 });
