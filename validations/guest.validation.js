@@ -1,4 +1,4 @@
-const paymentTypes = ["naqd", "bank", "karta"];
+const paymentTypes = ["naqd", "bank", "karta", "click"];
 const guestBaseProperties = {
   firstname: { type: "string", minLength: 1 },
   lastname: { type: "string", minLength: 1 },
@@ -16,7 +16,7 @@ const guestBaseProperties = {
   bookedForDate: { type: "string", minLength: 1 },
   room: { type: "string", pattern: "^[0-9a-fA-F]{24}$" },
   dailyRate: { type: "number", minimum: 0 },
-  mainPaymentType: { type: "string", enum: ["naqd", "bank"], default: "naqd" },
+  mainPaymentType: { type: "string", enum: ["naqd", "bank", "click"], default: "naqd" },
   stayDays: { type: "number", minimum: 1 },
   note: { type: "string" },
   initialPaymentAmount: { type: "number", minimum: 0, multipleOf: 1 },
@@ -146,6 +146,16 @@ const guestPaymentParamsSchema = {
   },
 };
 
+const guestServiceParamsSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id", "serviceIndex"],
+  properties: {
+    id: { type: "string", pattern: "^[0-9a-fA-F]{24}$" },
+    serviceIndex: { type: "string", pattern: "^[0-9]+$" },
+  },
+};
+
 const bulkCheckoutGuestsSchema = {
   type: "object",
   additionalProperties: false,
@@ -197,6 +207,7 @@ const addGuestServiceSchema = {
   properties: {
     serviceId: { type: "string", pattern: "^[0-9a-fA-F]{24}$" },
     name: { type: "string", minLength: 1 },
+    category: { type: "string", minLength: 1 },
     price: { type: "number", minimum: 0 },
     quantity: { type: "number", minimum: 1, multipleOf: 1 },
     usedAt: { type: "string" },
@@ -237,4 +248,5 @@ module.exports = {
   vipRequestIdParamsSchema,
   decideVipRequestSchema,
   guestPaymentParamsSchema,
+  guestServiceParamsSchema,
 };

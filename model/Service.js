@@ -4,6 +4,7 @@ const serviceSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true, unique: true },
     defaultPrice: { type: Number, required: true, min: 0, default: 0 },
+    category: { type: String, trim: true, default: "Boshqa" },
     isActive: { type: Boolean, default: true },
     note: { type: String, trim: true, default: "" },
   },

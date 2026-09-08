@@ -5,7 +5,7 @@ const hallPaymentSchema = new mongoose.Schema(
     amount: { type: Number, required: true, min: 1 },
     type: {
       type: String,
-      enum: ["naqd", "bank", "karta"],
+      enum: ["naqd", "bank", "karta", "click"],
       required: true,
     },
     note: { type: String, trim: true, default: "" },

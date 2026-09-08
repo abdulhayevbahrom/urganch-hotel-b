@@ -803,6 +803,8 @@ const buildGuestsFilter = async ({
       { firstname: searchRegex },
       { lastname: searchRegex },
       { passport: searchRegex },
+      { organization: searchRegex },
+      { organizationInn: searchRegex },
     ];
     if (roomIds.length) searchOr.push({ room: { $in: roomIds } });
     filter.$or = searchOr;
@@ -1591,14 +1593,9 @@ const addGuestService = async (req, res) => {
   try {
     const guest = await Guest.findById(req.params.id);
     if (!guest) return response.notFound(res, "Mehmon topilmadi");
-    if (guest.status === "checked_out") {
-      return response.error(
-        res,
-        "Checkout qilingan mijozga xizmat qo'shib bo'lmaydi",
-      );
+    if (guest.status === "active") {
+      await syncGuestBilling(guest);
     }
-
-    await syncGuestBilling(guest);
 
     let serviceDoc = null;
     if (req.body.serviceId) {
@@ -1606,6 +1603,9 @@ const addGuestService = async (req, res) => {
     }
 
     const name = String(req.body.name || serviceDoc?.name || "").trim();
+    const category =
+      String(req.body.category || serviceDoc?.category || "Boshqa").trim() ||
+      "Boshqa";
     const price = Number(
       Object.prototype.hasOwnProperty.call(req.body, "price")
         ? req.body.price
@@ -1619,6 +1619,7 @@ const addGuestService = async (req, res) => {
     guest.services.push({
       serviceId: serviceDoc?._id,
       name,
+      category,
       price,
       quantity,
       totalAmount,
@@ -1644,6 +1645,49 @@ const addGuestService = async (req, res) => {
     return response.success(
       res,
       "Mehmon xizmati qo'shildi",
+      attachGuestRuntimeFlags(populated),
+    );
+  } catch (error) {
+    return response.serverError(res, error.message);
+  }
+};
+
+const deleteGuestService = async (req, res) => {
+  try {
+    const serviceIndex = Number(req.params.serviceIndex);
+    if (!Number.isInteger(serviceIndex) || serviceIndex < 0) {
+      return response.error(res, "serviceIndex noto'g'ri");
+    }
+
+    const guest = await Guest.findById(req.params.id);
+    if (!guest) return response.notFound(res, "Mehmon topilmadi");
+    if (!Array.isArray(guest.services) || !guest.services[serviceIndex]) {
+      return response.notFound(res, "Xizmat topilmadi");
+    }
+
+    if (guest.status === "active") {
+      await syncGuestBilling(guest);
+    }
+
+    const [removedService] = guest.services.splice(serviceIndex, 1);
+    const removedAmount = Number(removedService?.totalAmount || 0);
+    guest.totalAmount = Math.max(Number(guest.totalAmount || 0) - removedAmount, 0);
+    recalcAmounts(guest);
+    await guest.save();
+
+    emitGuestChanged(req.app.get("socket"), {
+      guestId: String(guest._id),
+      roomId: String(guest.room || ""),
+      status: guest.status,
+      totalAmount: Number(guest.totalAmount || 0),
+      debtAmount: Number(guest.debtAmount || 0),
+      reason: "guest_service_deleted",
+    });
+
+    const populated = await Guest.findById(guest._id).populate("room").lean();
+    return response.success(
+      res,
+      "Xizmat olib tashlandi",
       attachGuestRuntimeFlags(populated),
     );
   } catch (error) {
@@ -1876,6 +1920,7 @@ module.exports = {
   addGuestPayment,
   updateGuestPayment,
   addGuestService,
+  deleteGuestService,
   checkoutGuest,
   continueGuestStay,
   checkoutGuestsBulk,

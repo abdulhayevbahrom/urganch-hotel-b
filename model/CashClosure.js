@@ -15,6 +15,7 @@ const totalsSchema = new mongoose.Schema(
   {
     naqd: { type: Number, default: 0, min: 0 },
     karta: { type: Number, default: 0, min: 0 },
+    click: { type: Number, default: 0, min: 0 },
     bank: { type: Number, default: 0, min: 0 },
     total: { type: Number, default: 0, min: 0 },
   },

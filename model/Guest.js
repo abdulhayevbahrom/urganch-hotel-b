@@ -6,7 +6,7 @@ const paymentSchema = new mongoose.Schema(
     amount: { type: Number, required: true, min: 0 },
     type: {
       type: String,
-      enum: ["naqd", "bank", "karta"],
+      enum: ["naqd", "bank", "karta", "click"],
       required: true,
     },
     note: { type: String, trim: true, default: "" },
@@ -20,6 +20,7 @@ const guestServiceSchema = new mongoose.Schema(
   {
     serviceId: { type: mongoose.Schema.Types.ObjectId, ref: "Service" },
     name: { type: String, required: true, trim: true },
+    category: { type: String, trim: true, default: "Boshqa" },
     price: { type: Number, required: true, min: 0 },
     quantity: { type: Number, required: true, min: 1, default: 1 },
     totalAmount: { type: Number, required: true, min: 0 },
@@ -93,7 +94,7 @@ const guestSchema = new mongoose.Schema(
     },
     mainPaymentType: {
       type: String,
-      enum: ["naqd", "bank"],
+      enum: ["naqd", "bank", "click"],
       default: "naqd",
     },
     totalAmount: { type: Number, required: true, min: 0 },

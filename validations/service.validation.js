@@ -14,6 +14,7 @@ const createServiceSchema = {
   properties: {
     name: { type: "string", minLength: 1 },
     defaultPrice: { type: "number", minimum: 0 },
+    category: { type: "string", minLength: 1 },
     isActive: { type: "boolean", default: true },
     note: { type: "string" },
   },
@@ -26,6 +27,7 @@ const updateServiceSchema = {
   properties: {
     name: { type: "string", minLength: 1 },
     defaultPrice: { type: "number", minimum: 0 },
+    category: { type: "string", minLength: 1 },
     isActive: { type: "boolean" },
     note: { type: "string" },
   },

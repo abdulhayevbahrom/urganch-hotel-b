@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const moment = require("moment-timezone");
 const {
   calculateDailyGuestBalance,
+  getCalendarDayRange,
   getDailyActiveGuestFilter,
 } = require("../controllers/reports.controller");
 
@@ -74,4 +75,17 @@ test("checkout exactly at operational day start belongs to the previous day", ()
       { status: "checked_out", checkOutAt: { $gt: dayStart } },
     ],
   });
+});
+
+test("expense daily report range follows calendar day instead of hotel operational day", () => {
+  const expenseReportDay = moment.tz("2026-09-06", "YYYY-MM-DD", timezone);
+  const range = getCalendarDayRange(expenseReportDay);
+  const earlyMorningExpense = new Date("2026-09-06T05:00:00+05:00");
+  const previousReportDayEnd = getCalendarDayRange(
+    moment.tz("2026-09-05", "YYYY-MM-DD", timezone),
+  ).end;
+
+  assert.equal(earlyMorningExpense >= range.start, true);
+  assert.equal(earlyMorningExpense < range.end, true);
+  assert.equal(earlyMorningExpense < previousReportDayEnd, false);
 });

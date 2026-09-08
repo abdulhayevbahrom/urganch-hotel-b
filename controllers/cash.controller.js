@@ -5,11 +5,11 @@ const response = require("../utils/response");
 const { buildCashActor } = require("../utils/cashRegister");
 const { hasFullAccess } = require("../utils/roleAccess");
 
-const PAYMENT_TYPES = ["naqd", "karta", "bank"];
+const PAYMENT_TYPES = ["naqd", "karta", "bank", "click"];
 
 const canSeeAllCash = (user) => hasFullAccess(user?.role);
 
-const emptyTotals = () => ({ naqd: 0, karta: 0, bank: 0, total: 0 });
+const emptyTotals = () => ({ naqd: 0, karta: 0, click: 0, bank: 0, total: 0 });
 
 const summarizeTransactions = (transactions = []) =>
   transactions.reduce((totals, item) => {

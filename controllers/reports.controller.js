@@ -64,6 +64,11 @@ const getOperationalDay = (date) => {
   return localDate.startOf("day");
 };
 
+const getCalendarDayRange = (day) => ({
+  start: day.clone().startOf("day").toDate(),
+  end: day.clone().add(1, "day").startOf("day").toDate(),
+});
+
 const calculateDailyGuestBalance = ({ guest, reportDay, dayStart, nextDayStart, dailyRate }) => {
   const checkInOperationalDay = getOperationalDay(guest.checkInAt || dayStart);
   const previousBillableDays = Math.max(
@@ -499,6 +504,7 @@ const getDailyReport = async (req, res) => {
     // Hotel daily reports follow the operational day: 12:00 to 12:00.
     const dayStart = day.clone().hour(12).minute(0).second(0).millisecond(0).toDate();
     const nextDayStart = day.clone().add(1, "day").hour(12).minute(0).second(0).millisecond(0).toDate();
+    const calendarDay = getCalendarDayRange(day);
 
     const [guestPaymentRows, hallPaymentRows, expenses, servicesAgg, activeGuests, totalRooms] =
       await Promise.all([
@@ -533,7 +539,7 @@ const getDailyReport = async (req, res) => {
             source: { $concat: [{ $ifNull: ["$hallName", "Zal"] }, " - ", { $ifNull: ["$eventName", ""] }] },
           } },
         ]),
-        Expense.find({ spentAt: { $gte: dayStart, $lt: nextDayStart } })
+        Expense.find({ spentAt: { $gte: calendarDay.start, $lt: calendarDay.end } })
           .select("title category amount paymentType spentAt")
           .sort({ spentAt: 1 })
           .lean(),
@@ -545,7 +551,7 @@ const getDailyReport = async (req, res) => {
         Guest.find(getDailyActiveGuestFilter({ dayStart, nextDayStart }))
           .populate("room", "roomNumber floor korpus capacity activeGuestsCount category prices status")
           .select(
-            "firstname lastname organization room stayDays billableDays dailyRate dailyRates totalAmount paidAmount debtAmount payments status vip checkInAt checkOutAt checkoutDueAt",
+            "firstname lastname organization organizationInn room stayDays billableDays dailyRate dailyRates totalAmount paidAmount debtAmount payments status vip checkInAt checkOutAt checkoutDueAt",
           )
           .sort({ "room.roomNumber": 1, createdAt: 1 })
           .lean(),
@@ -589,6 +595,7 @@ const getDailyReport = async (req, res) => {
         floor: roomDoc.floor || "-",
         korpus: roomDoc.korpus || "-",
         organization: String(guest.organization || "").trim(),
+        organizationInn: String(guest.organizationInn || "").trim(),
         guestCount: 1,
         dailyRate,
         breakfast: 0,
@@ -621,6 +628,7 @@ const getDailyReport = async (req, res) => {
         current.closingDebt += guest.closingDebt;
         current.dailyRate += guest.dailyRate;
         current.organization = current.organization || guest.organization;
+        current.organizationInn = current.organizationInn || guest.organizationInn;
         return rooms;
       }, new Map()).values(),
     ).map((guest) => ({
@@ -676,6 +684,7 @@ const getDailyReport = async (req, res) => {
 
 module.exports = {
   calculateDailyGuestBalance,
+  getCalendarDayRange,
   getDailyActiveGuestFilter,
   getDailyReport,
   getReportsSummary,

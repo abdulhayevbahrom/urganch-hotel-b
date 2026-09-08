@@ -3,7 +3,7 @@ const mongoose = require("mongoose");
 const groupPaymentSchema = new mongoose.Schema(
   {
     amount: { type: Number, required: true, min: 1 },
-    type: { type: String, enum: ["naqd", "bank", "karta"], required: true },
+    type: { type: String, enum: ["naqd", "bank", "karta", "click"], required: true },
     note: { type: String, trim: true, default: "" },
     createdAt: { type: Date, default: Date.now },
   },
@@ -37,7 +37,7 @@ const groupBookingSchema = new mongoose.Schema(
     dailyRate: { type: Number, required: true, min: 0 },
     mainPaymentType: {
       type: String,
-      enum: ["naqd", "bank"],
+      enum: ["naqd", "bank", "click"],
       default: "naqd",
     },
     note: { type: String, trim: true, default: "" },

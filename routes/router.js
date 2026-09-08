@@ -8,6 +8,13 @@ const {
   refreshTokenSchema,
 } = require("../validations/employee.validation");
 const {
+  payrollIdParamsSchema,
+  payrollActionParamsSchema,
+  payrollPreviewQuerySchema,
+  createPayrollSchema,
+  updatePayrollSchema,
+} = require("../validations/payroll.validation");
+const {
   createRoomSchema,
   updateRoomSchema,
   roomIdParamsSchema,
@@ -39,6 +46,16 @@ const {
   loginEmployee,
   refreshEmployeeToken,
 } = require("../controllers/employee.controller");
+const {
+  getPayrolls,
+  getPayrollHistory,
+  getPayrollPreview,
+  createPayroll,
+  updatePayroll,
+  updatePayrollAction,
+  deletePayrollAction,
+  deletePayroll,
+} = require("../controllers/payroll.controller");
 const {
   createRoom,
   getRooms,
@@ -76,6 +93,7 @@ const {
   guestIdParamsSchema,
   guestPassportParamsSchema,
   guestPaymentParamsSchema,
+  guestServiceParamsSchema,
   bulkCheckoutGuestsSchema,
   continueGuestStaySchema,
   addPaymentSchema,
@@ -112,6 +130,7 @@ const {
   addGuestPayment,
   updateGuestPayment,
   addGuestService,
+  deleteGuestService,
   checkoutGuest,
   continueGuestStay,
   checkoutGuestsBulk,
@@ -162,6 +181,36 @@ router.delete(
   "/employee/:id",
   validate(employeeIdParamsSchema, "params"),
   deleteEmployee,
+);
+router.get("/payrolls", getPayrolls);
+router.get("/payroll-history", getPayrollHistory);
+router.get(
+  "/payroll/preview",
+  validate(payrollPreviewQuerySchema, "query"),
+  getPayrollPreview,
+);
+router.post("/payroll", validate(createPayrollSchema), createPayroll);
+router.put(
+  "/payroll/:id",
+  validate(payrollIdParamsSchema, "params"),
+  validate(updatePayrollSchema),
+  updatePayroll,
+);
+router.put(
+  "/payroll/:id/action/:actionId",
+  validate(payrollActionParamsSchema, "params"),
+  validate(updatePayrollSchema),
+  updatePayrollAction,
+);
+router.delete(
+  "/payroll/:id/action/:actionId",
+  validate(payrollActionParamsSchema, "params"),
+  deletePayrollAction,
+);
+router.delete(
+  "/payroll/:id",
+  validate(payrollIdParamsSchema, "params"),
+  deletePayroll,
 );
 router.post(
   "/group-booking/:id/payment",
@@ -311,6 +360,11 @@ router.post(
   validate(guestIdParamsSchema, "params"),
   validate(addGuestServiceSchema),
   addGuestService,
+);
+router.delete(
+  "/guest/:id/service/:serviceIndex",
+  validate(guestServiceParamsSchema, "params"),
+  deleteGuestService,
 );
 router.post(
   "/guest/:id/checkout",

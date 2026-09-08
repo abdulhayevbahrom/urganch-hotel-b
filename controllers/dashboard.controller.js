@@ -1,6 +1,8 @@
 const moment = require("moment-timezone");
 const Guest = require("../model/Guest");
 const Expense = require("../model/Expense");
+const Employee = require("../model/Employee");
+const Payroll = require("../model/Payroll");
 const Room = require("../model/Room");
 const response = require("../utils/response");
 const { getDailyRateForDay } = require("../utils/guestDailyRates");
@@ -12,8 +14,10 @@ const WEEKDAY_LABELS = ["Yak", "Dush", "Sesh", "Chor", "Pay", "Ju", "Shan"];
 const PAYMENT_TYPES = [
   { type: "naqd", label: "Naqd pul" },
   { type: "karta", label: "Plastik karta" },
+  { type: "click", label: "Click" },
   { type: "bank", label: "Bank o'tkazma" },
 ];
+const MINI_BAR_CATEGORY_PATTERN = /mini\s*-?\s*bar|mini\s*bar|bar/i;
 
 const formatChange = (current, previous) => {
   const curr = Number(current || 0);
@@ -326,7 +330,7 @@ const getDashboardSummary = async (req, res) => {
       $or: [{ checkOutAt: null }, { checkOutAt: { $gte: monthStart.toDate() } }],
     };
 
-    const [hotelSettings, activeGuests, bookedGuests, debtorsAgg = {}, arrivedCount, leftCount, pendingNextDayCount, vipCount, activeTodayGuests, expensesFacet = {}, roomsFacet = {}] =
+    const [hotelSettings, activeGuests, bookedGuests, debtorsAgg = {}, arrivedCount, leftCount, pendingNextDayCount, vipCount, activeTodayGuests, expensesFacet = {}, salariesAgg = {}, payrollFundAgg = {}, roomsFacet = {}, miniBarSalesAgg = {}] =
       await Promise.all([
         getHotelSettings(),
         Guest.countDocuments({
@@ -406,36 +410,49 @@ const getDashboardSummary = async (req, res) => {
                   },
                 },
               ],
-              salaryTotal: [
-                {
-                  $match: {
-                    $expr: {
-                      $or: [
-                        {
-                          $regexMatch: {
-                            input: { $ifNull: ["$category", ""] },
-                            regex: "oylik|maosh|salary",
-                            options: "i",
+            },
+          },
+        ]).then((result) => result?.[0] || {}),
+        Payroll.aggregate([
+          { $match: { month: monthKey } },
+          {
+            $project: {
+              total: {
+                $cond: [
+                  { $gt: [{ $size: { $ifNull: ["$actions", []] } }, 0] },
+                  {
+                    $sum: {
+                      $map: {
+                        input: {
+                          $filter: {
+                            input: { $ifNull: ["$actions", []] },
+                            as: "action",
+                            cond: { $eq: ["$$action.type", "payment"] },
                           },
                         },
-                        {
-                          $regexMatch: {
-                            input: { $ifNull: ["$title", ""] },
-                            regex: "oylik|maosh|salary",
-                            options: "i",
-                          },
-                        },
-                      ],
+                        as: "payment",
+                        in: { $ifNull: ["$$payment.amount", 0] },
+                      },
                     },
                   },
-                },
-                {
-                  $group: {
-                    _id: null,
-                    total: { $sum: { $ifNull: ["$amount", 0] } },
-                  },
-                },
-              ],
+                  { $ifNull: ["$paidAmount", 0] },
+                ],
+              },
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              total: { $sum: "$total" },
+            },
+          },
+        ]).then((result) => result?.[0] || {}),
+        Employee.aggregate([
+          { $match: { isActive: true } },
+          {
+            $group: {
+              _id: null,
+              total: { $sum: { $ifNull: ["$salary", 0] } },
             },
           },
         ]).then((result) => result?.[0] || {}),
@@ -469,6 +486,27 @@ const getDashboardSummary = async (req, res) => {
             },
           },
         ]).then((result) => result?.[0] || {}),
+        Guest.aggregate([
+          { $unwind: "$services" },
+          {
+            $match: {
+              "services.usedAt": {
+                $gte: monthStart.toDate(),
+                $lt: nextMonthStart.toDate(),
+              },
+              $or: [
+                { "services.category": MINI_BAR_CATEGORY_PATTERN },
+                { "services.name": MINI_BAR_CATEGORY_PATTERN },
+              ],
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              total: { $sum: { $ifNull: ["$services.totalAmount", 0] } },
+            },
+          },
+        ]).then((result) => result?.[0] || {}),
       ]);
 
     const todayExpectedBilling = getTodayExpectedBilling(
@@ -491,8 +529,9 @@ const getDashboardSummary = async (req, res) => {
       value: Number(expenseDailyMap.get(index + 1) || 0),
     }));
     const expensesTotal = Number(expensesFacet?.monthlyTotal?.[0]?.total || 0);
-    const salariesPaid = Number(expensesFacet?.salaryTotal?.[0]?.total || 0);
-    const monthlyExpenses = Math.max(expensesTotal - salariesPaid, 0);
+    const salariesPaid = Number(salariesAgg?.total || 0);
+    const payrollFund = Number(payrollFundAgg?.total || 0);
+    const monthlyExpenses = expensesTotal;
     const balance = monthRevenue - monthlyExpenses - salariesPaid;
     const monthlyChart = {
       labels: Array.from({ length: daysInMonth }, (_, index) => String(index + 1)),
@@ -549,6 +588,8 @@ const getDashboardSummary = async (req, res) => {
         debtorsAmount: Number(debtorsAgg?.totalDebt || 0),
         monthlyExpenses,
         salariesPaid,
+        payrollFund,
+        miniBarSales: Number(miniBarSalesAgg?.total || 0),
         balance,
       },
       dailySnapshot: {

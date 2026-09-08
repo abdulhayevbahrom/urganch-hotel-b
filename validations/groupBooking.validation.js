@@ -28,7 +28,7 @@ const createGroupBookingSchema = {
     bookedForDate: { type: "string", minLength: 1 },
     stayDays: { type: "number", minimum: 1 },
     dailyRate: { type: "number", minimum: 0 },
-    mainPaymentType: { type: "string", enum: ["naqd", "bank"] },
+    mainPaymentType: { type: "string", enum: ["naqd", "bank", "click"] },
     note: { type: "string" },
     roomAssignments: {
       type: "array",
@@ -72,7 +72,7 @@ const updateGroupBookingSchema = {
     phone: { type: "string", pattern: "^$|^\\+?[0-9]{7,15}$" },
     email: { type: "string", pattern: "^$|^[^\\s@]+@gmail\\.com$" },
     dailyRate: { type: "number", minimum: 0 },
-    mainPaymentType: { type: "string", enum: ["naqd", "bank"] },
+    mainPaymentType: { type: "string", enum: ["naqd", "bank", "click"] },
     note: { type: "string" },
   },
 };
@@ -83,7 +83,7 @@ const addGroupPaymentSchema = {
   required: ["amount", "type"],
   properties: {
     amount: { type: "number", minimum: 1, multipleOf: 1 },
-    type: { type: "string", enum: ["naqd", "bank", "karta"] },
+    type: { type: "string", enum: ["naqd", "bank", "karta", "click"] },
     note: { type: "string" },
   },
 };

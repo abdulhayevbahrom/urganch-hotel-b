@@ -38,7 +38,7 @@ const cashTransactionSchema = new mongoose.Schema(
     },
     paymentType: {
       type: String,
-      enum: ["naqd", "karta", "bank"],
+      enum: ["naqd", "karta", "bank", "click"],
       required: true,
       default: "naqd",
     },

@@ -6,6 +6,7 @@ const createService = async (req, res) => {
     const payload = {
       name: String(req.body.name || "").trim(),
       defaultPrice: Number(req.body.defaultPrice || 0),
+      category: String(req.body.category || "Boshqa").trim() || "Boshqa",
       isActive:
         typeof req.body.isActive === "boolean" ? req.body.isActive : true,
       note: String(req.body.note || "").trim(),
@@ -24,7 +25,7 @@ const createService = async (req, res) => {
 const getServices = async (req, res) => {
   try {
     const activeOnly = String(req.query.activeOnly || "").toLowerCase() === "true";
-    const filter = activeOnly ? { isActive: true } : {};
+    const filter = activeOnly ? { isActive: { $ne: false } } : {};
     const items = await Service.find(filter).sort({ createdAt: -1 });
     return response.success(res, "Xizmatlar ro'yxati", items);
   } catch (error) {
@@ -40,6 +41,9 @@ const updateService = async (req, res) => {
     }
     if (Object.prototype.hasOwnProperty.call(req.body, "defaultPrice")) {
       updates.defaultPrice = Number(req.body.defaultPrice || 0);
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, "category")) {
+      updates.category = String(req.body.category || "Boshqa").trim() || "Boshqa";
     }
     if (Object.prototype.hasOwnProperty.call(req.body, "isActive")) {
       updates.isActive = Boolean(req.body.isActive);
