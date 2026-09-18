@@ -22,7 +22,11 @@ const {
   getDailyRateForDay,
   getLodgingTotal,
 } = require("../utils/guestDailyRates");
-const { recordCashTransaction } = require("../utils/cashRegister");
+const {
+  buildCashActor,
+  recordCashTransaction,
+  updateCashTransaction,
+} = require("../utils/cashRegister");
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TIMEZONE = process.env.APP_TIMEZONE || "Asia/Tashkent";
@@ -1487,8 +1491,35 @@ const decideVipRequest = async (req, res) => {
 };
 
 const addGuestPayment = async (req, res) => {
+  const session = await mongoose.startSession();
   try {
+    if (String(req.admin?.role || "").toLowerCase().trim() !== "kassir") {
+      return response.forbidden(
+        res,
+        "Qarzdor mijozdan to'lovni faqat kassir qabul qilishi mumkin",
+      );
+    }
+    if (!Array.isArray(req.admin?.sections) || !req.admin.sections.includes("cash")) {
+      return response.forbidden(res, "Kassa bo'limiga kirish uchun ruxsat yo'q");
+    }
     const { amount, type, note = "" } = req.body;
+    const paymentParts = Array.isArray(req.body.payments)
+      ? req.body.payments.map((item) => ({
+          amount: Number(item.amount || 0),
+          type: String(item.type || "").trim(),
+        }))
+      : [{ amount: Number(amount || 0), type: String(type || "").trim() }];
+    const paymentTypes = new Set();
+    for (const item of paymentParts) {
+      if (paymentTypes.has(item.type)) {
+        return response.error(res, "Bir to'lov usulini ikki marta kiritib bo'lmaydi");
+      }
+      paymentTypes.add(item.type);
+    }
+    const totalPayment = paymentParts.reduce(
+      (sum, item) => sum + Number(item.amount || 0),
+      0,
+    );
     const guest = await Guest.findById(req.params.id);
     if (!guest) return response.notFound(res, "Mehmon topilmadi");
     // if (guest.status !== "active") return response.error(res, "Faqat active mehmon uchun to'lov qo'shiladi");
@@ -1496,22 +1527,40 @@ const addGuestPayment = async (req, res) => {
       return response.error(res, "VIP mehmon uchun to'lov olinmaydi");
 
     await syncGuestBilling(guest);
+    if (totalPayment > Number(guest.debtAmount || 0)) {
+      return response.error(res, "To'lov summasi mijoz qarzidan oshmasligi kerak");
+    }
 
-    guest.payments.push({ amount: Number(amount), type, note });
-    const paymentIndex = guest.payments.length - 1;
-    guest.paidAmount = Number(guest.paidAmount || 0) + Number(amount);
-    recalcAmounts(guest);
-    await guest.save();
-    await recordCashTransaction({
-      user: req.admin,
-      sourceType: "guest",
-      sourceId: guest._id,
-      sourcePaymentIndex: paymentIndex,
-      title: `${guest.firstname} ${guest.lastname}`.trim(),
-      amount: Number(amount),
-      paymentType: type,
-      paidAt: guest.payments[paymentIndex].createdAt || new Date(),
-      note,
+    await session.withTransaction(async () => {
+      guest.$session(session);
+      const firstPaymentIndex = guest.payments.length;
+      paymentParts.forEach((item) => {
+        guest.payments.push({
+          amount: item.amount,
+          type: item.type,
+          note,
+          receivedBy: buildCashActor(req.admin),
+        });
+      });
+      guest.paidAmount = Number(guest.paidAmount || 0) + totalPayment;
+      recalcAmounts(guest);
+      await guest.save({ session });
+      for (let offset = 0; offset < paymentParts.length; offset += 1) {
+        const paymentIndex = firstPaymentIndex + offset;
+        const payment = guest.payments[paymentIndex];
+        await recordCashTransaction({
+          user: req.admin,
+          sourceType: "guest",
+          sourceId: guest._id,
+          sourcePaymentIndex: paymentIndex,
+          title: `${guest.firstname} ${guest.lastname}`.trim(),
+          amount: payment.amount,
+          paymentType: payment.type,
+          paidAt: payment.createdAt || new Date(),
+          note,
+          session,
+        });
+      }
     });
 
     emitGuestChanged(req.app.get("socket"), {
@@ -1531,10 +1580,13 @@ const addGuestPayment = async (req, res) => {
     );
   } catch (error) {
     return response.serverError(res, error.message);
+  } finally {
+    session.endSession();
   }
 };
 
 const updateGuestPayment = async (req, res) => {
+  const session = await mongoose.startSession();
   try {
     const paymentIndex = Number(req.params.paymentIndex);
     if (!Number.isInteger(paymentIndex) || paymentIndex < 0) {
@@ -1550,28 +1602,41 @@ const updateGuestPayment = async (req, res) => {
       return response.error(res, "VIP mehmon uchun to'lov o'zgartirilmaydi");
     }
 
-    const payment = guest.payments[paymentIndex];
-    if (Object.prototype.hasOwnProperty.call(req.body, "amount")) {
-      const nextAmount = Number(req.body.amount);
-      if (!Number.isFinite(nextAmount) || nextAmount < 0) {
-        return response.error(res, "To'lov summasi noto'g'ri");
-      }
-      payment.amount = nextAmount;
-    }
-    if (Object.prototype.hasOwnProperty.call(req.body, "type")) {
-      payment.type = String(req.body.type || "").trim();
-    }
-    if (Object.prototype.hasOwnProperty.call(req.body, "note")) {
-      payment.note = String(req.body.note || "").trim();
-    }
-
     await syncGuestBilling(guest);
-    guest.paidAmount = (guest.payments || []).reduce(
-      (sum, item) => sum + Number(item.amount || 0),
-      0,
-    );
-    recalcAmounts(guest);
-    await guest.save();
+    await session.withTransaction(async () => {
+      guest.$session(session);
+      const payment = guest.payments[paymentIndex];
+      if (Object.prototype.hasOwnProperty.call(req.body, "amount")) {
+        const nextAmount = Number(req.body.amount);
+        if (!Number.isFinite(nextAmount) || nextAmount < 0) {
+          throw new Error("To'lov summasi noto'g'ri");
+        }
+        payment.amount = nextAmount;
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, "type")) {
+        payment.type = String(req.body.type || "").trim();
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, "note")) {
+        payment.note = String(req.body.note || "").trim();
+      }
+
+      guest.paidAmount = (guest.payments || []).reduce(
+        (sum, item) => sum + Number(item.amount || 0),
+        0,
+      );
+      recalcAmounts(guest);
+      await updateCashTransaction({
+        sourceType: "guest",
+        sourceId: guest._id,
+        sourcePaymentIndex: paymentIndex,
+        amount: payment.amount,
+        paymentType: payment.type,
+        paidAt: payment.createdAt,
+        note: payment.note,
+        session,
+      });
+      await guest.save({ session });
+    });
 
     emitGuestChanged(req.app.get("socket"), {
       guestId: String(guest._id),
@@ -1585,7 +1650,15 @@ const updateGuestPayment = async (req, res) => {
     const populated = await Guest.findById(guest._id).populate("room").lean();
     return response.success(res, "To'lov yangilandi", attachGuestRuntimeFlags(populated));
   } catch (error) {
+    if (
+      error.code === "CASH_TRANSACTION_LOCKED" ||
+      error.message === "To'lov summasi noto'g'ri"
+    ) {
+      return response.error(res, error.message);
+    }
     return response.serverError(res, error.message);
+  } finally {
+    session.endSession();
   }
 };
 

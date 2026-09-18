@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const moment = require("moment-timezone");
 const {
   calculateDailyGuestBalance,
-  getCalendarDayRange,
+  getDailyReportRange,
   getDailyActiveGuestFilter,
 } = require("../controllers/reports.controller");
 
@@ -47,6 +47,16 @@ test("returning guest opening and closing balances include prior days", () => {
   assert.deepEqual(result.closing, { prepayment: 0, debt: 250000 });
 });
 
+test("Click payments have their own daily report column", () => {
+  const result = calculate("2026-08-24T13:00:00+05:00", [
+    { amount: 350000, type: "click", createdAt: "2026-08-24T15:00:00+05:00" },
+  ]);
+
+  assert.equal(result.payments.click, 350000);
+  assert.equal(result.payments.card, 0);
+  assert.deepEqual(result.closing, { prepayment: 50000, debt: 0 });
+});
+
 test("unused old payment is carried as opening and closing prepayment", () => {
   const result = calculate("2026-08-23T13:00:00+05:00", [
     { amount: 700000, type: "naqd", createdAt: "2026-08-23T14:00:00+05:00" },
@@ -77,15 +87,16 @@ test("checkout exactly at operational day start belongs to the previous day", ()
   });
 });
 
-test("expense daily report range follows calendar day instead of hotel operational day", () => {
+test("expense daily report uses the same operational day as guests", () => {
   const expenseReportDay = moment.tz("2026-09-06", "YYYY-MM-DD", timezone);
-  const range = getCalendarDayRange(expenseReportDay);
-  const earlyMorningExpense = new Date("2026-09-06T05:00:00+05:00");
-  const previousReportDayEnd = getCalendarDayRange(
-    moment.tz("2026-09-05", "YYYY-MM-DD", timezone),
-  ).end;
+  const range = getDailyReportRange(expenseReportDay, "09:30", "14:15");
+  const beforeCheckInBoundary = new Date("2026-09-06T09:29:59+05:00");
+  const afterCheckInBoundary = new Date("2026-09-06T09:30:00+05:00");
+  const beforeCheckoutBoundary = new Date("2026-09-07T14:14:59+05:00");
+  const atCheckoutBoundary = new Date("2026-09-07T14:15:00+05:00");
 
-  assert.equal(earlyMorningExpense >= range.start, true);
-  assert.equal(earlyMorningExpense < range.end, true);
-  assert.equal(earlyMorningExpense < previousReportDayEnd, false);
+  assert.equal(beforeCheckInBoundary >= range.start, false);
+  assert.equal(afterCheckInBoundary >= range.start, true);
+  assert.equal(beforeCheckoutBoundary < range.end, true);
+  assert.equal(atCheckoutBoundary < range.end, false);
 });

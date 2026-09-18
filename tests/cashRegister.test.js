@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { summarizeTransactions } = require("../controllers/cash.controller");
+const { isCashierUser } = require("../utils/cashRegister");
 
 test("cash summary separates payment types and total", () => {
   assert.deepEqual(
@@ -19,4 +20,13 @@ test("cash summary separates payment types and total", () => {
       total: 825000,
     },
   );
+});
+
+test("only kassir profile is treated as a cash collector", () => {
+  assert.equal(isCashierUser({ role: "kassir" }), true);
+  assert.equal(isCashierUser({ role: " KASSIR " }), true);
+  assert.equal(isCashierUser({ role: "owner" }), false);
+  assert.equal(isCashierUser({ role: "admin" }), false);
+  assert.equal(isCashierUser({ role: "administrator" }), false);
+  assert.equal(isCashierUser({}), false);
 });

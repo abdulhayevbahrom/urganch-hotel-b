@@ -8,11 +8,26 @@ const REFRESH_EXPIRES_IN = process.env.JWT_REFRESH_EXPIRES_IN || "30d";
 const REFRESH_SECRET =
   process.env.JWT_REFRESH_SECRET_KEY || process.env.JWT_SECRET_KEY;
 const EMPLOYEE_LIST_FIELDS =
-  "firstname lastname position salary canLogin login sections isActive createdAt";
+  "firstname lastname position role salary canLogin login sections isActive createdAt";
+
+const EMPLOYEE_ROLES = ["owner", "manager", "kassir", "other"];
+const ROLE_POSITIONS = {
+  owner: "Direktor",
+  manager: "Manager",
+  kassir: "Kassir",
+};
+
+const normalizeRole = (value) => {
+  const role = String(value || "other").toLowerCase().trim();
+  return EMPLOYEE_ROLES.includes(role) ? role : "other";
+};
+
+const normalizePosition = (role, position) =>
+  ROLE_POSITIONS[role] || String(position || "").trim();
 
 const buildTokenPayload = (employee) => ({
   id: employee._id,
-  role: String(employee.position || "").toLowerCase().trim(),
+  role: normalizeRole(employee.role),
   login: employee.login,
   sections: employee.sections || [],
   tv: Number(employee.tokenVersion || 1),
@@ -34,12 +49,28 @@ const createEmployee = async (req, res) => {
       firstname,
       lastname,
       position,
+      role,
       salary,
       canLogin,
       login,
       sections,
       password,
     } = req.body;
+
+    const normalizedRole = normalizeRole(role);
+    const normalizedPosition = normalizePosition(normalizedRole, position);
+    const normalizedSections = Array.from(
+      new Set(Array.isArray(sections) ? sections : []),
+    );
+    if (!normalizedPosition) {
+      return response.error(res, "Boshqa lavozim nomini kiriting");
+    }
+    if (
+      normalizedRole === "owner" &&
+      (await Employee.exists({ role: "owner" }))
+    ) {
+      return response.error(res, "Tizimda faqat bitta owner bo'lishi mumkin");
+    }
 
     let normalizedUsername;
     if (canLogin) {
@@ -58,16 +89,20 @@ const createEmployee = async (req, res) => {
     const employee = await Employee.create({
       firstname,
       lastname,
-      position,
+      position: normalizedPosition,
+      role: normalizedRole,
       salary,
       canLogin,
       login: canLogin ? normalizedUsername : undefined,
-      sections,
+      sections: normalizedSections,
       password: canLogin ? hashedPassword : undefined,
     });
 
     return response.created(res, "Hodim muvaffaqiyatli qo'shildi", employee);
   } catch (error) {
+    if (error?.code === 11000 && error?.keyPattern?.role) {
+      return response.error(res, "Tizimda faqat bitta owner bo'lishi mumkin");
+    }
     return response.serverError(res, error.message);
   }
 };
@@ -102,6 +137,26 @@ const updateEmployee = async (req, res) => {
     const currentEmployee = await Employee.findById(id);
 
     if (!currentEmployee) return response.notFound(res, "Hodim topilmadi");
+
+    const nextRole = Object.prototype.hasOwnProperty.call(updates, "role")
+      ? normalizeRole(updates.role)
+      : normalizeRole(currentEmployee.role);
+    if (
+      nextRole === "owner" &&
+      (await Employee.exists({ role: "owner", _id: { $ne: id } }))
+    ) {
+      return response.error(res, "Tizimda faqat bitta owner bo'lishi mumkin");
+    }
+    updates.role = nextRole;
+    updates.position = normalizePosition(
+      nextRole,
+      Object.prototype.hasOwnProperty.call(updates, "position")
+        ? updates.position
+        : currentEmployee.position,
+    );
+    if (!updates.position) {
+      return response.error(res, "Boshqa lavozim nomini kiriting");
+    }
 
     const nextCanLogin = Object.prototype.hasOwnProperty.call(
       updates,
@@ -143,9 +198,20 @@ const updateEmployee = async (req, res) => {
       delete updateQuery.password;
     }
 
+    const roleChanged =
+      Object.prototype.hasOwnProperty.call(req.body, "role") &&
+      normalizeRole(req.body.role) !== normalizeRole(currentEmployee.role);
+    const sectionsChanged =
+      Object.prototype.hasOwnProperty.call(req.body, "sections") &&
+      JSON.stringify([...(req.body.sections || [])].sort()) !==
+        JSON.stringify([...(currentEmployee.sections || [])].sort());
     const shouldInvalidateSession =
-      Object.prototype.hasOwnProperty.call(updates, "isActive") &&
-      updates.isActive === false;
+      (Object.prototype.hasOwnProperty.call(updates, "isActive") &&
+        updates.isActive === false) ||
+      roleChanged ||
+      sectionsChanged ||
+      (Object.prototype.hasOwnProperty.call(req.body, "canLogin") &&
+        req.body.canLogin === false);
 
     if (shouldInvalidateSession) {
       updateQuery.tokenVersion = Number(currentEmployee.tokenVersion || 1) + 1;
@@ -161,12 +227,15 @@ const updateEmployee = async (req, res) => {
       const io = req.app.get("socket");
       if (io) {
         io.to(`user:${id}`).emit("force_logout", {
-          reason: "employee_deactivated",
+          reason: "employee_access_changed",
         });
       }
     }
     return response.success(res, "Hodim yangilandi", employee);
   } catch (error) {
+    if (error?.code === 11000 && error?.keyPattern?.role) {
+      return response.error(res, "Tizimda faqat bitta owner bo'lishi mumkin");
+    }
     return response.serverError(res, error.message);
   }
 };
@@ -215,7 +284,7 @@ const loginEmployee = async (req, res) => {
     if (!passwordMatch)
       return response.unauthorized(res, "Login yoki parol noto'g'ri");
 
-    const normalizedRole = String(employee.position || "").toLowerCase().trim();
+    const normalizedRole = normalizeRole(employee.role);
     const token = signAccessToken(employee);
     const refreshToken = signRefreshToken(employee);
     employee.refreshToken = refreshToken;
@@ -271,7 +340,7 @@ const refreshEmployeeToken = async (req, res) => {
         firstname: employee.firstname,
         lastname: employee.lastname,
         position: employee.position,
-        role: String(employee.position || "").toLowerCase().trim(),
+        role: normalizeRole(employee.role),
         sections: employee.sections || [],
       },
     });

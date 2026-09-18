@@ -18,7 +18,7 @@ const authMiddleware = async (req, res, next) => {
 
     const employee = await Employee.findById(result.id)
       .select(
-        "isActive canLogin tokenVersion login position sections firstname lastname",
+        "isActive canLogin tokenVersion login position role sections firstname lastname",
       )
       .lean();
     if (!employee || !employee.isActive || !employee.canLogin) {
@@ -31,9 +31,7 @@ const authMiddleware = async (req, res, next) => {
 
     result = {
       id: employee._id,
-      role: String(employee.position || "")
-        .toLowerCase()
-        .trim(),
+      role: String(employee.role || "other").toLowerCase().trim(),
       login: employee.login,
       sections: employee.sections || [],
       firstname: employee.firstname,

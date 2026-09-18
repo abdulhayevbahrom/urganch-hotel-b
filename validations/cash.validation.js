@@ -2,6 +2,7 @@ const objectIdPattern = "^[0-9a-fA-F]{24}$";
 
 const closeCashSchema = {
   type: "object",
+  required: ["countedCash"],
   additionalProperties: false,
   properties: {
     countedCash: { type: "number", minimum: 0 },

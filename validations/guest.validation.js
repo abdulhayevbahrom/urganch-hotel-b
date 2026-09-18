@@ -181,12 +181,29 @@ const continueGuestStaySchema = {
 const addPaymentSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["amount", "type"],
   properties: {
     amount: { type: "number", minimum: 1, multipleOf: 1 },
     type: { type: "string", enum: paymentTypes },
+    payments: {
+      type: "array",
+      minItems: 1,
+      maxItems: 4,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["amount", "type"],
+        properties: {
+          amount: { type: "number", minimum: 1, multipleOf: 1 },
+          type: { type: "string", enum: paymentTypes },
+        },
+      },
+    },
     note: { type: "string" },
   },
+  anyOf: [
+    { required: ["amount", "type"] },
+    { required: ["payments"] },
+  ],
 };
 
 const updatePaymentSchema = {

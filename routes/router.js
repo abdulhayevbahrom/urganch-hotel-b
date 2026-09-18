@@ -1,5 +1,6 @@
 const router = require("express").Router();
 const validate = require("../middleware/validate.middleware");
+const requireSection = require("../middleware/requireSection.middleware");
 const {
   createEmployeeSchema,
   updateEmployeeSchema,
@@ -77,6 +78,7 @@ const {
 const { getDashboardSummary } = require("../controllers/dashboard.controller");
 const {
   getCashSummary,
+  getDailyCashControl,
   closeCash,
   decideCashClosure,
 } = require("../controllers/cash.controller");
@@ -232,10 +234,17 @@ router.put(
 router.delete("/room/:id", validate(roomIdParamsSchema, "params"), deleteRoom);
 router.post("/expense", validate(createExpenseSchema), createExpense);
 router.get("/dashboard", getDashboardSummary);
-router.get("/cash", getCashSummary);
-router.post("/cash/close", validate(closeCashSchema), closeCash);
+router.get("/cash", requireSection("cash"), getCashSummary);
+router.get("/cash/daily-control", requireSection("cash"), getDailyCashControl);
+router.post(
+  "/cash/close",
+  requireSection("cash"),
+  validate(closeCashSchema),
+  closeCash,
+);
 router.post(
   "/cash/closures/:id/decision",
+  requireSection("cash"),
   validate(cashClosureIdParamsSchema, "params"),
   validate(decideCashClosureSchema),
   decideCashClosure,

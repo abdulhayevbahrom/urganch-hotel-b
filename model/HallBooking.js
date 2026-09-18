@@ -10,6 +10,13 @@ const hallPaymentSchema = new mongoose.Schema(
     },
     note: { type: String, trim: true, default: "" },
     createdAt: { type: Date, default: Date.now },
+    receivedBy: {
+      userId: { type: String, default: "" },
+      role: { type: String, default: "" },
+      login: { type: String, default: "" },
+      firstname: { type: String, default: "" },
+      lastname: { type: String, default: "" },
+    },
   },
   { _id: false },
 );

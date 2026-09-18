@@ -1,7 +1,8 @@
 const HallBooking = require("../model/HallBooking");
 const Employee = require("../model/Employee");
+const mongoose = require("mongoose");
 const response = require("../utils/response");
-const { recordCashTransaction } = require("../utils/cashRegister");
+const { buildCashActor, recordCashTransaction } = require("../utils/cashRegister");
 
 const buildCreatedBy = async (user) => {
   const actor = {
@@ -202,8 +203,9 @@ const updateHallBooking = async (req, res) => {
 };
 
 const addHallBookingPayment = async (req, res) => {
+  const session = await mongoose.startSession();
   try {
-    const booking = await HallBooking.findById(req.params.id);
+    const booking = await HallBooking.findById(req.params.id).session(session);
     if (!booking) return response.notFound(res, "Zal ijarasi topilmadi");
 
     const amount = Number(req.body.amount || 0);
@@ -212,25 +214,35 @@ const addHallBookingPayment = async (req, res) => {
       return response.error(res, "To'lov qarzdan oshmasin");
     }
 
-    booking.payments.push({
-      amount,
-      type: String(req.body.type || "naqd"),
-      note: String(req.body.note || "").trim(),
+    await session.withTransaction(async () => {
+      booking.payments.push({
+        amount,
+        type: String(req.body.type || "naqd"),
+        note: String(req.body.note || "").trim(),
+        receivedBy: buildCashActor(req.admin),
+      });
+      const paymentIndex = booking.payments.length - 1;
+      booking.paidAmount = Number(booking.paidAmount || 0) + amount;
+      booking.debtAmount = Math.max(Number(booking.totalAmount || 0) - booking.paidAmount, 0);
+      await booking.save({ session });
+      await recordCashTransaction({
+        user: req.admin,
+        sourceType: "hall",
+        sourceId: booking._id,
+        sourcePaymentIndex: paymentIndex,
+        title: `Zal: ${`${booking.customerFirstname || ""} ${booking.customerLastname || ""}`.trim() || booking.eventName || "Ijara"}`,
+        amount,
+        paymentType: booking.payments[paymentIndex].type,
+        paidAt: booking.payments[paymentIndex].createdAt || new Date(),
+        note: booking.payments[paymentIndex].note,
+        session,
+      });
     });
-    const paymentIndex = booking.payments.length - 1;
-    booking.paidAmount = Number(booking.paidAmount || 0) + amount;
-    booking.debtAmount = Math.max(Number(booking.totalAmount || 0) - booking.paidAmount, 0);
-    await booking.save();
-    await recordCashTransaction({
-      user: req.admin,
-      sourceType: "hall",
-      sourceId: booking._id,
-      sourcePaymentIndex: paymentIndex,
-      title: `Zal: ${`${booking.customerFirstname || ""} ${booking.customerLastname || ""}`.trim() || booking.eventName || "Ijara"}`,
-      amount,
-      paymentType: booking.payments[paymentIndex].type,
-      paidAt: booking.payments[paymentIndex].createdAt || new Date(),
-      note: booking.payments[paymentIndex].note,
+
+    req.app.get("socket")?.emit("cash_updated", {
+      reason: "hall_payment_added",
+      bookingId: String(booking._id),
+      emittedAt: new Date(),
     });
 
     return response.success(
@@ -240,6 +252,8 @@ const addHallBookingPayment = async (req, res) => {
     );
   } catch (error) {
     return response.serverError(res, error.message);
+  } finally {
+    session.endSession();
   }
 };
 

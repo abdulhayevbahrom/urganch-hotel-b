@@ -1,11 +1,12 @@
 const GroupBooking = require("../model/GroupBooking");
+const mongoose = require("mongoose");
 const Guest = require("../model/Guest");
 const Room = require("../model/Room");
 const VipRequest = require("../model/VipRequest");
 const response = require("../utils/response");
 const { syncRoomsOccupancyByIds } = require("../utils/roomOccupancy");
 const { getHotelSettings, applyTimeToDate, parseTime } = require("../utils/hotelSettings");
-const { recordCashTransaction } = require("../utils/cashRegister");
+const { buildCashActor, recordCashTransaction } = require("../utils/cashRegister");
 
 const parseBookingStart = (value, checkinTime = "09:00") => {
   const date = new Date(value);
@@ -217,11 +218,12 @@ const getGroupBookings = async (req, res) => {
 };
 
 const addGroupPayment = async (req, res) => {
+  const session = await mongoose.startSession();
   try {
-    const group = await GroupBooking.findById(req.params.id);
+    const group = await GroupBooking.findById(req.params.id).session(session);
     if (!group) return response.notFound(res, "Guruh topilmadi");
 
-    const guests = await Guest.find({ group: group._id, vip: { $ne: true } });
+    const guests = await Guest.find({ group: group._id, vip: { $ne: true } }).session(session);
     if (!guests.length) {
       return response.error(res, "Guruhda to'lov olinadigan mehmon yo'q");
     }
@@ -238,41 +240,46 @@ const addGroupPayment = async (req, res) => {
       );
     }
 
-    const baseShare = Math.floor(amount / guests.length);
-    let remainder = amount - baseShare * guests.length;
-    for (const guest of guests) {
-      const share = baseShare + (remainder > 0 ? 1 : 0);
-      if (remainder > 0) remainder -= 1;
-      guest.payments.push({
-        amount: share,
-        type: req.body.type,
-        note: req.body.note || `Guruh to'lovi: ${group.name}`,
-      });
-      guest.paidAmount = Number(guest.paidAmount || 0) + share;
-      guest.debtAmount = Math.max(
-        Number(guest.totalAmount || 0) - guest.paidAmount,
-        0,
-      );
-      await guest.save();
-    }
+    await session.withTransaction(async () => {
+      const baseShare = Math.floor(amount / guests.length);
+      let remainder = amount - baseShare * guests.length;
+      for (const guest of guests) {
+        const share = baseShare + (remainder > 0 ? 1 : 0);
+        if (remainder > 0) remainder -= 1;
+        guest.payments.push({
+          amount: share,
+          type: req.body.type,
+          note: req.body.note || `Guruh to'lovi: ${group.name}`,
+          receivedBy: buildCashActor(req.admin),
+        });
+        guest.paidAmount = Number(guest.paidAmount || 0) + share;
+        guest.debtAmount = Math.max(
+          Number(guest.totalAmount || 0) - guest.paidAmount,
+          0,
+        );
+        await guest.save({ session });
+      }
 
-    group.payments.push({
-      amount,
-      type: req.body.type,
-      note: req.body.note || "",
-    });
-    const paymentIndex = group.payments.length - 1;
-    await group.save();
-    await recordCashTransaction({
-      user: req.admin,
-      sourceType: "group",
-      sourceId: group._id,
-      sourcePaymentIndex: paymentIndex,
-      title: `Guruh: ${group.name}`,
-      amount,
-      paymentType: req.body.type,
-      paidAt: group.payments[paymentIndex].createdAt || new Date(),
-      note: req.body.note || "",
+      group.payments.push({
+        amount,
+        type: req.body.type,
+        note: req.body.note || "",
+        receivedBy: buildCashActor(req.admin),
+      });
+      const paymentIndex = group.payments.length - 1;
+      await group.save({ session });
+      await recordCashTransaction({
+        user: req.admin,
+        sourceType: "group",
+        sourceId: group._id,
+        sourcePaymentIndex: paymentIndex,
+        title: `Guruh: ${group.name}`,
+        amount,
+        paymentType: req.body.type,
+        paidAt: group.payments[paymentIndex].createdAt || new Date(),
+        note: req.body.note || "",
+        session,
+      });
     });
 
     req.app.get("socket")?.emit("guest_updated", {
@@ -287,6 +294,8 @@ const addGroupPayment = async (req, res) => {
     });
   } catch (error) {
     return response.serverError(res, error.message);
+  } finally {
+    session.endSession();
   }
 };
 

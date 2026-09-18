@@ -8,9 +8,9 @@ const VipRequest = require("../model/VipRequest");
 const HallBooking = require("../model/HallBooking");
 const response = require("../utils/response");
 const { getDailyRateForDay, getLodgingTotal } = require("../utils/guestDailyRates");
+const { getHotelSettings, parseTime } = require("../utils/hotelSettings");
 
 const TIMEZONE = process.env.APP_TIMEZONE || "Asia/Tashkent";
-const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 const DATE_PATTERN = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 
 const getReportDay = (dateQuery) => {
@@ -19,13 +19,6 @@ const getReportDay = (dateQuery) => {
 
   const day = moment.tz(value, "YYYY-MM-DD", true, TIMEZONE);
   return day.isValid() && day.format("YYYY-MM-DD") === value ? day : null;
-};
-
-const getMonthBase = (monthQuery) => {
-  if (MONTH_PATTERN.test(String(monthQuery || ""))) {
-    return moment.tz(`${monthQuery}-01`, "YYYY-MM-DD", TIMEZONE).startOf("month");
-  }
-  return moment.tz(TIMEZONE).startOf("month");
 };
 
 const compareRoomRows = (a, b) => {
@@ -64,10 +57,31 @@ const getOperationalDay = (date) => {
   return localDate.startOf("day");
 };
 
-const getCalendarDayRange = (day) => ({
-  start: day.clone().startOf("day").toDate(),
-  end: day.clone().add(1, "day").startOf("day").toDate(),
-});
+const getDailyReportRange = (
+  day,
+  checkinTime = "09:00",
+  checkoutTime = "12:00",
+) => {
+  const checkin = parseTime(checkinTime);
+  const checkout = parseTime(checkoutTime);
+  return {
+    start: day
+      .clone()
+      .hour(checkin.hour)
+      .minute(checkin.minute)
+      .second(0)
+      .millisecond(0)
+      .toDate(),
+    end: day
+      .clone()
+      .add(1, "day")
+      .hour(checkout.hour)
+      .minute(checkout.minute)
+      .second(0)
+      .millisecond(0)
+      .toDate(),
+  };
+};
 
 const calculateDailyGuestBalance = ({ guest, reportDay, dayStart, nextDayStart, dailyRate }) => {
   const checkInOperationalDay = getOperationalDay(guest.checkInAt || dayStart);
@@ -88,11 +102,12 @@ const calculateDailyGuestBalance = ({ guest, reportDay, dayStart, nextDayStart, 
 
       const type = String(payment.type || "").toLowerCase();
       if (type === "naqd" || type === "cash") totals.cash += amount;
-      else if (type === "karta" || type === "card" || type === "click") totals.card += amount;
+      else if (type === "karta" || type === "card") totals.card += amount;
+      else if (type === "click") totals.click += amount;
       else if (type === "bank" || type === "transfer") totals.transfer += amount;
       return totals;
     },
-    { beforeDay: 0, cash: 0, card: 0, transfer: 0 },
+    { beforeDay: 0, cash: 0, card: 0, click: 0, transfer: 0 },
   );
 
   const billableGuest = { ...guest, dailyRate };
@@ -104,7 +119,8 @@ const calculateDailyGuestBalance = ({ guest, reportDay, dayStart, nextDayStart, 
     ? getLodgingTotal(billableGuest, previousBillableDays)
     : 0;
   const opening = splitBalance(payments.beforeDay - previousLodgingAmount);
-  const todayPayments = payments.cash + payments.card + payments.transfer;
+  const todayPayments =
+    payments.cash + payments.card + payments.click + payments.transfer;
   const closing = splitBalance(
     opening.prepayment - opening.debt + todayPayments - currentDayRate,
   );
@@ -124,10 +140,34 @@ const getDailyActiveGuestFilter = ({ dayStart, nextDayStart }) => ({
 
 const getReportsSummary = async (req, res) => {
   try {
-    const base = getMonthBase(req.query.month);
-    const monthKey = base.format("YYYY-MM");
-    const monthStart = base.clone().startOf("month");
-    const nextMonthStart = base.clone().add(1, "month").startOf("month");
+    const defaultMonth = moment.tz(TIMEZONE).startOf("month");
+    const fromDay = req.query.from
+      ? getReportDay(req.query.from)
+      : defaultMonth.clone();
+    const toDay = req.query.to
+      ? getReportDay(req.query.to)
+      : defaultMonth.clone().endOf("month").startOf("day");
+    if (!fromDay || !toDay) {
+      return response.error(res, "Sanalar YYYY-MM-DD formatida bo'lishi kerak");
+    }
+    if (fromDay.isAfter(toDay, "day")) {
+      return response.error(
+        res,
+        "Boshlanish sanasi tugash sanasidan keyin bo'lishi mumkin emas",
+      );
+    }
+
+    const hotelSettings = await getHotelSettings();
+    const reportStart = getDailyReportRange(
+      fromDay,
+      hotelSettings.checkinTime,
+      hotelSettings.checkoutTime,
+    ).start;
+    const reportEnd = getDailyReportRange(
+      toDay,
+      hotelSettings.checkinTime,
+      hotelSettings.checkoutTime,
+    ).end;
 
     const [paymentsAgg = {}, expensesAgg = {}, roomStatusAgg = {}, bookingStats = {}, hallStats = {}, servicesAgg = {}, guestStats = {}, blacklistedCount, vipPendingCount, loyalGuestsCount, activeEmployees, activeServices] =
       await Promise.all([
@@ -136,8 +176,8 @@ const getReportsSummary = async (req, res) => {
           {
             $match: {
               "payments.createdAt": {
-                $gte: monthStart.toDate(),
-                $lt: nextMonthStart.toDate(),
+                $gte: reportStart,
+                $lt: reportEnd,
               },
             },
           },
@@ -184,6 +224,14 @@ const getReportsSummary = async (req, res) => {
                 },
                 { $sort: { totalAmount: -1 } },
               ],
+              byPaymentType: [
+                {
+                  $group: {
+                    _id: "$payments.type",
+                    totalAmount: { $sum: { $ifNull: ["$payments.amount", 0] } },
+                  },
+                },
+              ],
             },
           },
         ]).then((result) => result?.[0] || {}),
@@ -191,8 +239,8 @@ const getReportsSummary = async (req, res) => {
           {
             $match: {
               spentAt: {
-                $gte: monthStart.toDate(),
-                $lt: nextMonthStart.toDate(),
+                $gte: reportStart,
+                $lt: reportEnd,
               },
             },
           },
@@ -245,8 +293,8 @@ const getReportsSummary = async (req, res) => {
                   $match: {
                     status: "booked",
                     bookedForAt: {
-                      $gte: monthStart.toDate(),
-                      $lt: nextMonthStart.toDate(),
+                      $gte: reportStart,
+                      $lt: reportEnd,
                     },
                   },
                 },
@@ -274,8 +322,8 @@ const getReportsSummary = async (req, res) => {
           {
             $match: {
               createdAt: {
-                $gte: monthStart.toDate(),
-                $lt: nextMonthStart.toDate(),
+                $gte: reportStart,
+                $lt: reportEnd,
               },
             },
           },
@@ -293,8 +341,8 @@ const getReportsSummary = async (req, res) => {
           {
             $match: {
               "services.usedAt": {
-                $gte: monthStart.toDate(),
-                $lt: nextMonthStart.toDate(),
+                $gte: reportStart,
+                $lt: reportEnd,
               },
             },
           },
@@ -313,8 +361,8 @@ const getReportsSummary = async (req, res) => {
                 {
                   $match: {
                     checkInAt: {
-                      $gte: monthStart.toDate(),
-                      $lt: nextMonthStart.toDate(),
+                      $gte: reportStart,
+                      $lt: reportEnd,
                     },
                   },
                 },
@@ -324,15 +372,24 @@ const getReportsSummary = async (req, res) => {
                 {
                   $match: {
                     checkOutAt: {
-                      $gte: monthStart.toDate(),
-                      $lt: nextMonthStart.toDate(),
+                      $gte: reportStart,
+                      $lt: reportEnd,
                     },
                   },
                 },
                 { $count: "count" },
               ],
               debtors: [
-                { $match: { debtAmount: { $gt: 0 } } },
+                {
+                  $match: {
+                    debtAmount: { $gt: 0 },
+                    checkInAt: { $lt: reportEnd },
+                    $or: [
+                      { checkOutAt: null },
+                      { checkOutAt: { $gt: reportStart } },
+                    ],
+                  },
+                },
                 {
                   $group: {
                     _id: null,
@@ -344,7 +401,7 @@ const getReportsSummary = async (req, res) => {
                           {
                             $lt: [
                               "$checkInAt",
-                              moment().tz(TIMEZONE).subtract(7, "days").toDate(),
+                              moment(reportEnd).subtract(7, "days").toDate(),
                             ],
                           },
                           1,
@@ -384,6 +441,18 @@ const getReportsSummary = async (req, res) => {
       ]);
 
     const paymentTotals = paymentsAgg?.totals?.[0] || {};
+    const paymentMethods = (paymentsAgg?.byPaymentType || []).reduce(
+      (totals, item) => {
+        const type = String(item?._id || "").toLowerCase();
+        const amount = Number(item?.totalAmount || 0);
+        if (type === "naqd" || type === "cash") totals.cash += amount;
+        else if (type === "karta" || type === "card") totals.card += amount;
+        else if (type === "click") totals.click += amount;
+        else if (type === "bank" || type === "transfer") totals.transfer += amount;
+        return totals;
+      },
+      { cash: 0, card: 0, click: 0, transfer: 0 },
+    );
     const topRoom = paymentsAgg?.byRoom?.[0] || {};
     const topCategory = paymentsAgg?.byCategory?.[0] || {};
     const expenseTotals = expensesAgg?.totals?.[0] || {};
@@ -401,7 +470,12 @@ const getReportsSummary = async (req, res) => {
     const vipCount = Number(guestStats?.vip?.[0]?.count || 0);
 
     return response.success(res, "Hisobotlar summary ma'lumotlari", {
-      month: monthKey,
+      from: fromDay.format("YYYY-MM-DD"),
+      to: toDay.format("YYYY-MM-DD"),
+      rangeStart: reportStart,
+      rangeEnd: reportEnd,
+      checkinTime: hotelSettings.checkinTime,
+      checkoutTime: hotelSettings.checkoutTime,
       timezone: TIMEZONE,
       generatedAt: new Date().toISOString(),
       sections: {
@@ -410,6 +484,7 @@ const getReportsSummary = async (req, res) => {
             count: Number(paymentTotals?.count || 0),
             totalAmount: Number(paymentTotals?.totalAmount || 0),
           },
+          paymentMethods,
           roomRevenue: {
             activeRoomsCount: Number(paymentsAgg?.byRoom?.length || 0),
             topRoomNumber: topRoom?._id || "-",
@@ -501,10 +576,16 @@ const getDailyReport = async (req, res) => {
       return response.error(res, "Kelajak sanasi uchun hisobot olib bo'lmaydi");
     }
 
-    // Hotel daily reports follow the operational day: 12:00 to 12:00.
-    const dayStart = day.clone().hour(12).minute(0).second(0).millisecond(0).toDate();
-    const nextDayStart = day.clone().add(1, "day").hour(12).minute(0).second(0).millisecond(0).toDate();
-    const calendarDay = getCalendarDayRange(day);
+    const hotelSettings = await getHotelSettings();
+    // Kunlik hisobot Settings'dagi kirish vaqtidan keyingi kunning
+    // chiqish vaqtigacha bo'lgan mehmonxona oralig'ini qamrab oladi.
+    const dailyReportRange = getDailyReportRange(
+      day,
+      hotelSettings.checkinTime,
+      hotelSettings.checkoutTime,
+    );
+    const dayStart = dailyReportRange.start;
+    const nextDayStart = dailyReportRange.end;
 
     const [guestPaymentRows, hallPaymentRows, expenses, servicesAgg, activeGuests, totalRooms] =
       await Promise.all([
@@ -539,7 +620,7 @@ const getDailyReport = async (req, res) => {
             source: { $concat: [{ $ifNull: ["$hallName", "Zal"] }, " - ", { $ifNull: ["$eventName", ""] }] },
           } },
         ]),
-        Expense.find({ spentAt: { $gte: calendarDay.start, $lt: calendarDay.end } })
+        Expense.find({ spentAt: { $gte: dayStart, $lt: nextDayStart } })
           .select("title category amount paymentType spentAt")
           .sort({ spentAt: 1 })
           .lean(),
@@ -603,6 +684,7 @@ const getDailyReport = async (req, res) => {
         openingDebt: balance.opening.debt,
         cash: balance.payments.cash,
         card: balance.payments.card,
+        click: balance.payments.click,
         transfer: balance.payments.transfer,
         fullName,
         closingPrepayment: balance.closing.prepayment,
@@ -623,6 +705,7 @@ const getDailyReport = async (req, res) => {
         current.openingDebt += guest.openingDebt;
         current.cash += guest.cash;
         current.card += guest.card;
+        current.click += guest.click;
         current.transfer += guest.transfer;
         current.closingPrepayment += guest.closingPrepayment;
         current.closingDebt += guest.closingDebt;
@@ -661,7 +744,8 @@ const getDailyReport = async (req, res) => {
       balance: paymentTotals.total - expenseTotal,
       paymentTypes: {
         cash: paymentTotals.naqd,
-        card: paymentTotals.karta + paymentTotals.click,
+        card: paymentTotals.karta,
+        click: paymentTotals.click,
         transfer: paymentTotals.bank,
       },
       operations: {
@@ -684,7 +768,7 @@ const getDailyReport = async (req, res) => {
 
 module.exports = {
   calculateDailyGuestBalance,
-  getCalendarDayRange,
+  getDailyReportRange,
   getDailyActiveGuestFilter,
   getDailyReport,
   getReportsSummary,

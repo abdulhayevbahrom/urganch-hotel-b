@@ -17,6 +17,12 @@ const employeeSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    role: {
+      type: String,
+      enum: ["owner", "manager", "kassir", "other"],
+      default: "other",
+      required: true,
+    },
     salary: {
       type: Number,
       required: true,
@@ -61,5 +67,12 @@ const employeeSchema = new mongoose.Schema(
 
 // Hodimlar listida createdAt bo'yicha sort ishlatilgani uchun.
 employeeSchema.index({ createdAt: -1 });
+employeeSchema.index(
+  { role: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { role: "owner" },
+  },
+);
 
 module.exports = mongoose.model("Employee", employeeSchema);

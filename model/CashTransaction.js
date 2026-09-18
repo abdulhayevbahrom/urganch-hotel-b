@@ -71,5 +71,12 @@ const cashTransactionSchema = new mongoose.Schema(
 
 cashTransactionSchema.index({ status: 1, "cashier.userId": 1, paidAt: -1 });
 cashTransactionSchema.index({ closure: 1, paidAt: -1 });
+cashTransactionSchema.index(
+  { sourceType: 1, sourceId: 1, sourcePaymentIndex: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { sourcePaymentIndex: { $type: "number" } },
+  },
+);
 
 module.exports = mongoose.model("CashTransaction", cashTransactionSchema);

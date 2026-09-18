@@ -117,7 +117,43 @@ const getStayDayForDate = (
   return Math.max(targetOperationalDay.diff(checkInOperationalDay, "day") + 1, 1);
 };
 
+const getDashboardOperationalRange = (
+  targetAt,
+  checkinTime = "09:00",
+  checkoutTime = "12:00",
+) => {
+  const target = moment(targetAt).tz(TIMEZONE);
+  const checkin = parseTime(checkinTime);
+  const checkout = parseTime(checkoutTime);
+  const checkoutMinutes = checkout.hour * 60 + checkout.minute;
+  const targetMinutes = target.hour() * 60 + target.minute();
+  const operationalDay = target.clone().startOf("day");
+
+  if (targetMinutes <= checkoutMinutes) operationalDay.subtract(1, "day");
+
+  return {
+    start: operationalDay
+      .clone()
+      .hour(checkin.hour)
+      .minute(checkin.minute)
+      .second(0)
+      .millisecond(0),
+    end: operationalDay
+      .clone()
+      .add(1, "day")
+      .hour(checkout.hour)
+      .minute(checkout.minute)
+      .second(0)
+      .millisecond(0),
+  };
+};
+
 const getTodayExpectedBilling = (guests = [], targetAt, settings = {}) => {
+  const operationalRange = getDashboardOperationalRange(
+    targetAt,
+    settings.checkinTime || "09:00",
+    settings.checkoutTime || "12:00",
+  );
   return guests.reduce(
     (totals, guest) => {
       if (guest?.vip) return totals;
@@ -132,7 +168,8 @@ const getTodayExpectedBilling = (guests = [], targetAt, settings = {}) => {
         const paidAt = moment(payment?.createdAt).tz(TIMEZONE);
         if (
           paidAt.isValid() &&
-          paidAt.isSame(moment(targetAt).tz(TIMEZONE), "day")
+          paidAt.isSameOrAfter(operationalRange.start) &&
+          paidAt.isBefore(operationalRange.end)
         ) {
           return sum + Number(payment?.amount || 0);
         }
@@ -614,6 +651,7 @@ const getDashboardSummary = async (req, res) => {
 
 module.exports = {
   getDashboardSummary,
+  getDashboardOperationalRange,
   getStayDayForDate,
   getTodayExpectedBilling,
 };

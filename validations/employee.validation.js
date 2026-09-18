@@ -1,11 +1,12 @@
 const createEmployeeSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["firstname", "lastname", "position", "salary"],
+  required: ["firstname", "lastname", "position", "role", "salary"],
   properties: {
     firstname: { type: "string", minLength: 1 },
     lastname: { type: "string", minLength: 1 },
     position: { type: "string", minLength: 1 },
+    role: { type: "string", enum: ["owner", "manager", "kassir", "other"] },
     salary: { type: "number", minimum: 0 },
     canLogin: { type: "boolean", default: false },
     login: { type: "string", minLength: 3 },
@@ -36,6 +37,7 @@ const updateEmployeeSchema = {
     firstname: { type: "string", minLength: 1 },
     lastname: { type: "string", minLength: 1 },
     position: { type: "string", minLength: 1 },
+    role: { type: "string", enum: ["owner", "manager", "kassir", "other"] },
     salary: { type: "number", minimum: 0 },
     canLogin: { type: "boolean" },
     login: { type: "string", minLength: 3 },

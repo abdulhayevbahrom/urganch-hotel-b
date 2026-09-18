@@ -1,9 +1,28 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  getDashboardOperationalRange,
   getStayDayForDate,
   getTodayExpectedBilling,
 } = require("../controllers/dashboard.controller");
+
+test("dashboard operational day follows configured check-in and checkout", () => {
+  const beforeCheckout = getDashboardOperationalRange(
+    new Date("2026-09-04T10:00:00+05:00"),
+    "09:00",
+    "12:00",
+  );
+  assert.equal(beforeCheckout.start.format(), "2026-09-03T09:00:00+05:00");
+  assert.equal(beforeCheckout.end.format(), "2026-09-04T12:00:00+05:00");
+
+  const afterCheckout = getDashboardOperationalRange(
+    new Date("2026-09-04T12:01:00+05:00"),
+    "09:00",
+    "12:00",
+  );
+  assert.equal(afterCheckout.start.format(), "2026-09-04T09:00:00+05:00");
+  assert.equal(afterCheckout.end.format(), "2026-09-05T12:00:00+05:00");
+});
 
 test("dashboard expected billing uses the current hotel stay day", () => {
   const settings = { checkinTime: "09:00", checkoutTime: "12:00" };
