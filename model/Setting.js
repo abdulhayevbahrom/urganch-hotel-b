@@ -2,6 +2,10 @@ const mongoose = require("mongoose");
 
 const settingSchema = new mongoose.Schema(
   {
+    status: {
+      type: Boolean,
+      default: false,
+    },
     hotelName: {
       type: String,
       default: "Mehmonxona nomi",

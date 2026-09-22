@@ -5,6 +5,7 @@ const updateSettingsSchema = {
   additionalProperties: false,
   minProperties: 1,
   properties: {
+    status: { type: "boolean" },
     hotelName: { type: "string", minLength: 1, maxLength: 120 },
     checkinTime: { type: "string", pattern: timePattern },
     checkoutTime: { type: "string", pattern: timePattern },
